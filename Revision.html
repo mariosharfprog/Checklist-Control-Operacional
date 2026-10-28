@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Enviar memorandos - SHARF</title>
+  <style>
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap');
+
+  :root {
+    --bg: #FFFFFF;
+    --ink: #111111;
+    --ink-soft: #3A3A3A;
+    --line: #E6E6E6;
+    --line-soft: #F1F1F1;
+    --green-pale: #99EBDD;
+    --green-deep: #003C46;
+    --red-pale: #FFC1C2;
+    --red-deep: #68002B;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Manrope', 'Segoe UI', sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+    padding-bottom: 96px;
+  }
+
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+
+  header.top { border-bottom: 2px solid var(--ink); padding: 20px 0 14px; margin-bottom: 20px; }
+  header.top h1 { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.01em; }
+  header.top p { margin: 6px 0 0; color: var(--ink-soft); font-size: 14px; }
+
+  a { color: var(--green-deep); }
+
+  :focus-visible { outline: 3px solid var(--green-deep); outline-offset: 2px; }
+
+  .estado-caja {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 16px;
+    background: var(--line-soft);
+    color: var(--ink);
+    margin-bottom: 16px;
+  }
+  .estado-caja.error { background: var(--red-pale); border-color: var(--red-deep); color: var(--red-deep); font-weight: 600; }
+  .estado-caja.ok { background: var(--green-pale); border-color: var(--green-deep); color: var(--green-deep); }
+
+  .spinner {
+    display: inline-block; width: 16px; height: 16px; margin-right: 8px; vertical-align: -3px;
+    border: 2px solid var(--line); border-top-color: var(--green-deep); border-radius: 50%;
+    animation: girar 0.8s linear infinite;
+  }
+  @keyframes girar { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+  .resultados { list-style: none; margin: 8px 0 0; padding: 0; }
+  .resultados li { padding: 6px 0; border-top: 1px solid rgba(0, 60, 70, 0.25); font-weight: 600; }
+  .resultados li.fallo { color: var(--red-deep); }
+
+  .lista-acciones { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+  .lista-acciones[hidden] { display: none; }
+
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 16px;
+    background: var(--bg);
+  }
+  .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .card-top h2 { margin: 0; font-size: 18px; font-weight: 800; }
+  .card .meta { margin: 10px 0 0; color: var(--ink-soft); font-size: 14px; }
+  .card .sub { margin: 10px 0 0; font-weight: 700; }
+
+  .nivel { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; white-space: nowrap; }
+  .nivel-3 { background: var(--red-pale); color: var(--red-deep); }
+  .nivel-activado { background: var(--bg); color: var(--ink); border: 2px solid var(--ink); }
+
+  .faltas { list-style: none; margin: 12px 0 0; padding: 0; border-top: 2px solid var(--ink); }
+  .faltas li { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .faltas .f-tit { font-weight: 700; }
+  .faltas .f-det { margin: 2px 0 0; color: var(--ink-soft); font-size: 14px; }
+  .faltas .f-ev { margin: 4px 0 0; font-size: 14px; }
+  .faltas .f-ev a { display: inline-block; padding: 8px 12px 8px 0; min-height: 44px; }
+
+  .chk-enviar {
+    display: flex; align-items: center; gap: 10px;
+    min-height: 44px; margin-top: 10px; padding: 10px 14px;
+    border: 2px solid var(--line); border-radius: 6px; background: var(--bg);
+    cursor: pointer; font-weight: 700;
+  }
+  .chk-enviar input { width: 22px; height: 22px; margin: 0; accent-color: var(--green-deep); flex: none; }
+  .chk-enviar.marcado { border-color: var(--green-deep); background: var(--green-pale); color: var(--green-deep); }
+  .chk-enviar.deshab { cursor: not-allowed; color: var(--ink-soft); background: var(--line-soft); }
+
+  .motivo { margin-top: 12px; }
+  .motivo label { display: block; font-weight: 700; margin-bottom: 4px; }
+  .motivo textarea {
+    width: 100%; min-height: 88px; padding: 10px 12px; resize: vertical;
+    font: inherit; color: var(--ink); background: var(--bg);
+    border: 2px solid var(--line); border-radius: 6px;
+  }
+  .motivo textarea:focus-visible { border-color: var(--green-deep); }
+  .motivo .ayuda { margin: 4px 0 0; font-size: 13px; color: var(--ink-soft); }
+  .motivo .ayuda.error { color: var(--red-deep); font-weight: 700; }
+  .motivo[hidden] { display: none; }
+
+  .nota { margin: 12px 0 0; padding: 10px 12px; border-radius: 6px; background: var(--red-pale); color: var(--red-deep); font-weight: 600; font-size: 14px; }
+
+  button {
+    font: inherit; font-weight: 700; min-height: 44px; padding: 10px 20px;
+    border-radius: 6px; cursor: pointer; border: 2px solid var(--green-deep);
+  }
+  .btn-primario { background: var(--green-deep); color: #FFFFFF; }
+  .btn-secundario { background: var(--bg); color: var(--green-deep); }
+  button:disabled { cursor: not-allowed; background: var(--line-soft); color: var(--ink-soft); border-color: var(--line); }
+
+  .barra {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    background: var(--bg); border-top: 2px solid var(--ink); padding: 12px 16px;
+  }
+  .barra .wrap { padding: 0; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .barra .cuenta { margin: 0; color: var(--ink-soft); font-size: 14px; }
+  .barra[hidden] { display: none; }
+
+  .fondo-modal {
+    position: fixed; inset: 0; z-index: 20; background: rgba(17, 17, 17, 0.55);
+    display: flex; align-items: center; justify-content: center; padding: 16px;
+  }
+  .fondo-modal[hidden] { display: none; }
+  .modal { background: var(--bg); border-radius: 8px; max-width: 480px; width: 100%; padding: 20px; border: 1px solid var(--line); }
+  .modal h2 { margin: 0 0 8px; font-size: 19px; font-weight: 800; }
+  .modal ul { margin: 8px 0 12px; padding-left: 20px; }
+  .modal .acciones { display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <h1>Enviar memorandos</h1>
+      <p>Estos memorandos se prepararon con tus checklists. Marca a quiénes sí se les enviará y presiona Enviar memos.</p>
+    </header>
+
+    <main>
+      <div id="estado" role="status" aria-live="polite"></div>
+      <div id="resultados" role="status" aria-live="polite"></div>
+      <div class="lista-acciones" id="listaAcciones" hidden>
+        <button type="button" class="btn-secundario" id="btnSeleccionarTodos">Seleccionar todos</button>
+      </div>
+      <section id="lista" aria-label="Memorandos pendientes de enviar"></section>
+    </main>
+  </div>
+
+  <div class="barra" id="barra" hidden>
+    <div class="wrap">
+      <p class="cuenta" id="resumenBarra">Sin memorandos seleccionados</p>
+      <button type="button" class="btn-primario" id="btnConfirmar" disabled>Enviar memos (0)</button>
+    </div>
+  </div>
+
+  <div class="fondo-modal" id="fondoModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitulo" aria-describedby="modalCuerpo">
+      <h2 id="modalTitulo">Confirmar envío de memorandos</h2>
+      <div id="modalCuerpo"></div>
+      <div class="acciones">
+        <button type="button" class="btn-secundario" id="btnModalCancelar">Cancelar</button>
+        <button type="button" class="btn-primario" id="btnModalAceptar">Sí, enviar memos</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  // Enviar memorandos: lista los pendientes del inspector y aplica sus decisiones (enviar / descartar).
+  // El estado de cada tarjeta vive en memoria: estado[idMemo] = { marcado: true|false, motivo: "" }
+  var pendientes = [];
+  var estado = {};
+  var controlesTarjetas = [];
+  var cuentaActual = "";
+  var enviando = false;
+  var elementoPrevioModal = null;
+
+  var MIN_MOTIVO = 5;
+
+  function $(id) { return document.getElementById(id); }
+
+  function crear(tag, clase, texto) {
+    var el = document.createElement(tag);
+    if (clase) el.className = clase;
+    if (texto !== undefined && texto !== null) el.textContent = texto;
+    return el;
+  }
+
+  function vaciar(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+
+  function esUrlHttp(u) { return /^https?:\/\//i.test(String(u || "")); }
+
+  function textoNivel(n) {
+    if (n === 1) return "1era Alerta · activado por ti";
+    if (n === 2) return "2da Alerta · activado por ti";
+    return "3era Alerta";
+  }
+
+  function claseNivel(n) { return "nivel" + (n === 3 ? " nivel-3" : " nivel-activado"); }
+
+  function mostrarEstado(tipo, texto, conSpinner) {
+    var caja = $("estado");
+    vaciar(caja);
+    if (!tipo) return;
+    var div = crear("div", "estado-caja" + (tipo === "error" ? " error" : ""));
+    if (conSpinner) div.appendChild(crear("span", "spinner"));
+    div.appendChild(document.createTextNode(texto));
+    caja.appendChild(div);
+  }
+
+  // ---------- Función pura de decisiones ----------
+  // Para cada pendiente, según su estado (marcado / motivo), decide si se genera, se descarta
+  // o queda sin decisión (pendiente). No depende del DOM: se puede probar en aislado.
+  function construirDecisiones(listaPendientes, estadoActual) {
+    var lista = [];
+    var enviar = [];
+    var descartar = [];
+    var pendientesCount = 0;
+    (listaPendientes || []).forEach(function(p) {
+      var e = (estadoActual && estadoActual[p.idMemo]) || {};
+      var nombre = p.colaborador + (p.subactividad ? " - " + p.subactividad : "");
+      if (e.marcado && p.generable) {
+        enviar.push(nombre);
+        lista.push({ idMemo: p.idMemo, decision: "generar", motivo: "" });
+        return;
+      }
+      var motivo = String(e.motivo || "").trim();
+      if (motivo.length >= MIN_MOTIVO) {
+        descartar.push(nombre);
+        lista.push({ idMemo: p.idMemo, decision: "descartar", motivo: motivo });
+        return;
+      }
+      pendientesCount++;
+    });
+    return { lista: lista, enviar: enviar, descartar: descartar, pendientes: pendientesCount };
+  }
+
+  // ---------- Carga de pendientes ----------
+  function cargarPendientes() {
+    mostrarEstado("info", "Cargando memorandos pendientes...", true);
+    vaciar($("lista"));
+    $("barra").hidden = true;
+    $("listaAcciones").hidden = true;
+    pendientes = [];
+    estado = {};
+    controlesTarjetas = [];
+    google.script.run
+      .withSuccessHandler(alRecibirPendientes)
+      .withFailureHandler(function(err) {
+        mostrarEstado("error", "No se pudo cargar la lista: " + (err && err.message ? err.message : err));
+      })
+      .obtenerPendientesRevision();
+  }
+
+  function alRecibirPendientes(resp) {
+    if (!resp || resp.ok !== true) {
+      mostrarEstado("error", (resp && resp.error) ? resp.error : "No se pudo cargar la lista.");
+      return;
+    }
+    cuentaActual = resp.cuenta || "";
+    pendientes = resp.pendientes || [];
+    if (pendientes.length === 0) {
+      mostrarEstado("info", "No tienes memorandos pendientes de enviar.");
+      return;
+    }
+    mostrarEstado(null);
+    pendientes.forEach(function(p) {
+      estado[p.idMemo] = { marcado: !!p.generable, motivo: "" };
+    });
+    dibujarLista();
+    $("barra").hidden = false;
+    actualizarResumen();
+  }
+
+  // ---------- Dibujo de tarjetas ----------
+  function dibujarLista() {
+    var cont = $("lista");
+    vaciar(cont);
+    controlesTarjetas = [];
+    pendientes.forEach(function(p, idx) {
+      var ctrl = crearTarjeta(p, idx);
+      cont.appendChild(ctrl.card);
+      controlesTarjetas.push(ctrl);
+    });
+  }
+
+  function crearTarjeta(p, idx) {
+    var card = crear("article", "card");
+    card.setAttribute("data-id", p.idMemo);
+
+    var top = crear("div", "card-top");
+    top.appendChild(crear("h2", "", p.colaborador || "(sin nombre)"));
+    top.appendChild(crear("span", claseNivel(p.nivelAlerta), textoNivel(p.nivelAlerta)));
+    card.appendChild(top);
+
+    var idChk = "chk-" + idx;
+    var labChk = crear("label", "chk-enviar");
+    labChk.setAttribute("for", idChk);
+    var chkInput = crear("input");
+    chkInput.type = "checkbox";
+    chkInput.id = idChk;
+    labChk.appendChild(chkInput);
+    labChk.appendChild(crear("span", "", "Enviar memo a " + (p.colaborador || "(sin nombre)")));
+    card.appendChild(labChk);
+
+    var meta = [p.negocio, p.operacion].filter(function(x) { return !!x; }).join(" / ");
+    card.appendChild(crear("p", "meta", meta + (p.fecha ? " - registrado el " + p.fecha : "")));
+    var sub = [p.actividad, p.subactividad].filter(function(x) { return !!x; }).join(" - ");
+    if (sub) card.appendChild(crear("p", "sub", sub));
+
+    if (p.faltas && p.faltas.length) {
+      var ol = crear("ol", "faltas");
+      p.faltas.forEach(function(f, i) {
+        var li = crear("li");
+        li.appendChild(crear("div", "f-tit", "Falta " + (i + 1) + ": " + (f.fecha || "-")));
+        if (f.obligacion) li.appendChild(crear("div", "f-det", f.obligacion));
+        if (f.detalle) li.appendChild(crear("div", "f-det", "Detalle: " + f.detalle));
+        var evs = (f.evidencias || []).filter(esUrlHttp);
+        if (evs.length) {
+          var ev = crear("div", "f-ev", "Evidencias: ");
+          evs.forEach(function(u, k) {
+            var a = crear("a", "", "Ver evidencia " + (k + 1));
+            a.href = u;
+            a.target = "_blank";
+            a.rel = "noopener noreferrer";
+            ev.appendChild(a);
+            ev.appendChild(document.createTextNode(" "));
+          });
+          li.appendChild(ev);
+        }
+        ol.appendChild(li);
+      });
+      card.appendChild(ol);
+    }
+
+    if (!p.generable) {
+      card.appendChild(crear("p", "nota", "Los datos de esta amonestación están incompletos: no se puede enviar el memo desde aquí. Puedes descartarla indicando un motivo."));
+      chkInput.disabled = true;
+      chkInput.checked = false;
+    } else {
+      chkInput.checked = !!(estado[p.idMemo] && estado[p.idMemo].marcado);
+    }
+
+    var bloqueMotivo = crear("div", "motivo");
+    var idMotivo = "mot-" + idx;
+    var labMotivo = crear("label", "", "Motivo para no enviarlo");
+    labMotivo.setAttribute("for", idMotivo);
+    var ta = crear("textarea");
+    ta.id = idMotivo;
+    ta.maxLength = 500;
+    ta.setAttribute("aria-describedby", idMotivo + "-ayuda");
+    var ayuda = crear("p", "ayuda", "Mínimo " + MIN_MOTIVO + " caracteres para descartarlo. Si lo dejas vacío, el memo seguirá pendiente.");
+    ayuda.id = idMotivo + "-ayuda";
+    bloqueMotivo.appendChild(labMotivo);
+    bloqueMotivo.appendChild(ta);
+    bloqueMotivo.appendChild(ayuda);
+    card.appendChild(bloqueMotivo);
+
+    function refrescar() {
+      var e = estado[p.idMemo];
+      labChk.className = "chk-enviar" + (e && e.marcado ? " marcado" : "") + (chkInput.disabled ? " deshab" : "");
+      bloqueMotivo.hidden = !!(e && e.marcado);
+      var motivoTexto = (e && e.motivo) || "";
+      var invalido = !(e && e.marcado) && motivoTexto.length > 0 && motivoTexto.trim().length < MIN_MOTIVO;
+      ayuda.className = "ayuda" + (invalido ? " error" : "");
+      ayuda.textContent = invalido
+        ? "El motivo debe tener al menos " + MIN_MOTIVO + " caracteres."
+        : "Mínimo " + MIN_MOTIVO + " caracteres para descartarlo. Si lo dejas vacío, el memo seguirá pendiente.";
+      actualizarResumen();
+    }
+
+    chkInput.addEventListener("change", function() {
+      estado[p.idMemo].marcado = chkInput.checked;
+      refrescar();
+    });
+    ta.addEventListener("input", function() {
+      estado[p.idMemo].motivo = ta.value;
+      refrescar();
+    });
+
+    refrescar();
+
+    return { card: card, p: p, chkInput: chkInput, refrescar: refrescar };
+  }
+
+  // ---------- Botón "Seleccionar todos" / "Quitar selección" ----------
+  function actualizarBotonSeleccionarTodos() {
+    var cont = $("listaAcciones");
+    var generables = pendientes.filter(function(p) { return p.generable; });
+    if (generables.length === 0) { cont.hidden = true; return; }
+    cont.hidden = false;
+    var todosMarcados = generables.every(function(p) { return estado[p.idMemo] && estado[p.idMemo].marcado; });
+    $("btnSeleccionarTodos").textContent = todosMarcados ? "Quitar selección" : "Seleccionar todos";
+  }
+
+  function alternarSeleccionTodos() {
+    var generables = controlesTarjetas.filter(function(c) { return c.p.generable; });
+    if (generables.length === 0) return;
+    var todosMarcados = generables.every(function(c) { return estado[c.p.idMemo].marcado; });
+    var nuevo = !todosMarcados;
+    generables.forEach(function(c) {
+      estado[c.p.idMemo].marcado = nuevo;
+      c.chkInput.checked = nuevo;
+      c.refrescar();
+    });
+  }
+
+  // ---------- Barra inferior ----------
+  function actualizarResumen() {
+    var r = construirDecisiones(pendientes, estado);
+    $("btnConfirmar").disabled = enviando || (r.enviar.length + r.descartar.length === 0);
+    $("btnConfirmar").textContent = r.enviar.length > 0 ? ("Enviar memos (" + r.enviar.length + ")") : "Aplicar";
+    $("resumenBarra").textContent = r.enviar.length + " por enviar · " + r.descartar.length + " por descartar · " + r.pendientes + " quedarán pendientes";
+    actualizarBotonSeleccionarTodos();
+  }
+
+  // ---------- Modal de confirmación ----------
+  function abrirModal() {
+    var r = construirDecisiones(pendientes, estado);
+    if (r.enviar.length + r.descartar.length === 0) return;
+    var cuerpo = $("modalCuerpo");
+    vaciar(cuerpo);
+    if (r.enviar.length > 0) {
+      cuerpo.appendChild(crear("p", "", "Se enviarán " + r.enviar.length + " memorando(s) a:"));
+      var ulEnviar = crear("ul");
+      r.enviar.forEach(function(n) { ulEnviar.appendChild(crear("li", "", n)); });
+      cuerpo.appendChild(ulEnviar);
+    }
+    if (r.descartar.length > 0) {
+      cuerpo.appendChild(crear("p", "", "Se descartarán " + r.descartar.length + ":"));
+      var ulDescartar = crear("ul");
+      r.descartar.forEach(function(n) { ulDescartar.appendChild(crear("li", "", n)); });
+      cuerpo.appendChild(ulDescartar);
+    }
+    if (r.pendientes > 0) {
+      cuerpo.appendChild(crear("p", "", r.pendientes + " quedarán pendientes."));
+    }
+    if (r.enviar.length > 0) {
+      cuerpo.appendChild(crear("p", "", "Esta acción no se puede deshacer."));
+    }
+    $("btnModalAceptar").textContent = r.enviar.length > 0 ? "Sí, enviar memos" : "Aplicar";
+    elementoPrevioModal = document.activeElement;
+    $("fondoModal").hidden = false;
+    $("btnModalAceptar").focus();
+  }
+
+  function cerrarModal() {
+    $("fondoModal").hidden = true;
+    if (elementoPrevioModal && typeof elementoPrevioModal.focus === "function") elementoPrevioModal.focus();
+  }
+
+  document.addEventListener("keydown", function(ev) {
+    if ($("fondoModal").hidden) return;
+    if (ev.key === "Escape" && !enviando) { cerrarModal(); return; }
+    if (ev.key === "Tab") {
+      var focos = [$("btnModalCancelar"), $("btnModalAceptar")].filter(function(b) { return !b.disabled; });
+      if (focos.length === 0) { ev.preventDefault(); return; }
+      var primero = focos[0];
+      var ultimo = focos[focos.length - 1];
+      if (ev.shiftKey && document.activeElement === primero) { ev.preventDefault(); ultimo.focus(); }
+      else if (!ev.shiftKey && document.activeElement === ultimo) { ev.preventDefault(); primero.focus(); }
+    }
+  });
+
+  // ---------- Envío de decisiones ----------
+  function bloquearUI(bloquear) {
+    enviando = bloquear;
+    var controles = document.querySelectorAll("#lista input, #lista textarea, #lista button, #btnSeleccionarTodos, #btnConfirmar, #btnModalCancelar, #btnModalAceptar");
+    for (var i = 0; i < controles.length; i++) controles[i].disabled = bloquear;
+    if (!bloquear) actualizarResumen();
+  }
+
+  function aplicarDecisiones() {
+    var r = construirDecisiones(pendientes, estado);
+    if (r.lista.length === 0) { cerrarModal(); return; }
+    var nombres = {};
+    pendientes.forEach(function(p) {
+      nombres[p.idMemo] = p.colaborador + (p.subactividad ? " - " + p.subactividad : "");
+    });
+
+    bloquearUI(true);
+    mostrarEstado("info", "Enviando memorandos. La generación y el envío de cada uno puede tardar unos segundos...", true);
+    google.script.run
+      .withSuccessHandler(function(resultados) {
+        bloquearUI(false);
+        cerrarModal();
+        mostrarResultados(resultados || [], nombres);
+        cargarPendientes();
+      })
+      .withFailureHandler(function(err) {
+        bloquearUI(false);
+        cerrarModal();
+        var cont = $("resultados");
+        vaciar(cont);
+        var caja = crear("div", "estado-caja error", "No se pudieron aplicar las decisiones: " + (err && err.message ? err.message : err) + ". Verifica el estado de cada memo en la lista actualizada.");
+        cont.appendChild(caja);
+        cargarPendientes();
+      })
+      .decidirPendientes(r.lista);
+  }
+
+  function mostrarResultados(resultados, nombres) {
+    var cont = $("resultados");
+    vaciar(cont);
+    var caja = crear("div", "estado-caja ok");
+    caja.appendChild(crear("strong", "", "Resultado de tus decisiones"));
+    var ul = crear("ul", "resultados");
+    resultados.forEach(function(r) {
+      var li = crear("li", r.ok ? "" : "fallo", (nombres[r.idMemo] || r.idMemo) + ": " + (r.mensaje || (r.ok ? "Listo." : "No se aplicó.")));
+      ul.appendChild(li);
+    });
+    caja.appendChild(ul);
+    cont.appendChild(caja);
+  }
+
+  $("btnConfirmar").addEventListener("click", abrirModal);
+  $("btnModalCancelar").addEventListener("click", cerrarModal);
+  $("btnModalAceptar").addEventListener("click", aplicarDecisiones);
+  $("btnSeleccionarTodos").addEventListener("click", alternarSeleccionTodos);
+
+  cargarPendientes();
+  </script>
+</body>
+</html>

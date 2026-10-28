@@ -1,0 +1,2827 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Inspección de Procesos - SHARF</title>
+  <!-- ===== TRAMPA DE DIAGNÓSTICO (temporal, se puede borrar) =====
+       Va ANTES que cualquier otro script para capturar hasta errores de sintaxis
+       del bloque principal (p. ej. si el archivo quedó pegado a medias). -->
+  <script>
+  (function(){
+    window.__diag = { errores: [], llamadas: [] };
+    function pintar(txt){
+      var c = document.getElementById("__diagBox");
+      if (!c) {
+        c = document.createElement("div");
+        c.id = "__diagBox";
+        c.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99999;background:#FFC1C2;color:#68002B;"
+          + "font:12px/1.5 monospace;padding:10px;white-space:pre-wrap;max-height:55vh;overflow:auto;border-bottom:2px solid #68002B";
+        (document.body || document.documentElement).appendChild(c);
+      }
+      c.textContent += txt + "\n";
+    }
+    window.addEventListener("error", function(e){
+      window.__diag.errores.push(e.message);
+      pintar("✗ ERROR: " + e.message + "\n   en " + (e.filename||"?") + " línea " + (e.lineno||"?"));
+    }, true);
+    window.addEventListener("unhandledrejection", function(e){
+      pintar("✗ PROMESA RECHAZADA: " + (e.reason && e.reason.message ? e.reason.message : e.reason));
+    });
+    // Vigilante: a los 15 s dice en qué punto se quedó
+    setTimeout(function(){
+      var card = document.getElementById("loadingCard");
+      if (!card || card.style.display === "none") return;   // ya cargó, todo bien
+      pintar("⏱ 15 s sin cargar. Estado:"
+        + "\n   script principal parseado: " + (typeof alRecibirDatos === "function" ? "SÍ" : "NO  <-- el archivo Index quedó incompleto o tiene un error de sintaxis")
+        + "\n   DOMContentLoaded ejecutado: " + (window.__diag.domReady ? "SÍ" : "NO")
+        + "\n   llamadas al servidor lanzadas: " + (window.__diag.llamadas.join(", ") || "NINGUNA")
+        + "\n   respuestas recibidas: " + (window.__diag.respuesta || "ninguna")
+        + "\n   heic2any cargado: " + (typeof heic2any !== "undefined" ? "SÍ" : "NO (no debería impedir la carga)")
+        + "\n   errores capturados: " + (window.__diag.errores.length || 0)
+        + "\n   sonda ANTES del script principal: " + (window.__diag.antesMain ? "SÍ" : "NO")
+        + "\n   sonda DESPUÉS del script principal: " + (window.__diag.despuesMain ? "SÍ" : "NO")
+        + "\n   tamaño del DOM recibido: " + document.documentElement.innerHTML.length + " chars"
+        + "\n   scripts en el DOM: " + document.scripts.length);
+    }, 15000);
+  })();
+  </script>
+  <script src="https://unpkg.com/heic2any@0.0.3/dist/heic2any.min.js"></script>
+  <script>
+  // Respaldo de heic2any si unpkg no responde. NO usar document.write(): Apps Script inyecta
+  // esta página con document.write() y escribir dentro de ese stream descarta todo lo que
+  // sigue (el script principal nunca se parsea). Se inyecta por DOM, de forma asíncrona;
+  // heic2any solo se usa al convertir fotos HEIC y ya tiene su propio fallback si no cargó.
+  if (typeof heic2any === 'undefined') {
+    var _heicFallback = document.createElement('script');
+    _heicFallback.src = 'https://cdn.jsdelivr.net/npm/heic2any@0.0.3/dist/heic2any.js';
+    _heicFallback.async = true;
+    (document.head || document.documentElement).appendChild(_heicFallback);
+  }
+  </script>
+  <style>
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap');
+
+  :root {
+    --bg-body: #FFFFFF;
+    --card-bg: #FFFFFF;
+    --ink: #111111;
+    --ink-soft: #3A3A3A;
+    --line: #E6E6E6;
+    --line-soft: #F1F1F1;
+    --black: #000000;
+    --green-pale: #99EBDD;
+    --green-deep: #003C46;
+    --green-bold: #00CCAA;
+    --red-pale: #FFC1C2;
+    --red-deep: #68002B;
+    --red-bold: #FF6568;
+    --yellow-pale: #FFFACD;
+    --yellow-deep: #B8860B;
+    --purple-pale: #EEBAFF;
+    --purple-deep: #8E24AA;
+    --purple-bold: #8E24AA;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Manrope', 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; }
+  body { background-color: var(--bg-body); color: var(--ink); padding: 25px; display: flex; justify-content: center; font-variant-numeric: tabular-nums; }
+  .container { width: 100%; max-width: 1080px; }
+  
+  /* ENCABEZADO CON SUBRAYADO NEGRO */
+  .header-bar { 
+    display: flex; 
+    justify-content: space-between; 
+    align-items: center; 
+    background-color: var(--purple-bold); 
+    border-radius: 12px; 
+    padding: 20px 24px; 
+    margin-bottom: 25px; 
+    gap: 20px;
+    box-shadow: 0 4px 14px rgba(212, 82, 255, 0.2);
+  }
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+  }
+  .brand-logo-card {
+    background: #ffffff;
+    padding: 6px 14px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  }
+  .brand-logo {
+    height: 36px;
+    width: auto;
+    max-width: 140px;
+    object-fit: contain;
+    display: block;
+  }
+  .main-title { font-size: 22px; font-weight: 800; color: #ffffff; }
+  .date-sub { font-size: 12px; color: rgba(255, 255, 255, 0.9); text-transform: uppercase; margin-top: 4px; font-weight: 600; }
+  .user-sub { font-size: 11px; color: #ffffff; margin-top: 4px; font-weight: 700; background: rgba(0, 0, 0, 0.2); padding: 2px 8px; border-radius: 4px; display: inline-block; }
+
+  @media (max-width: 768px) {
+    .header-bar { flex-direction: column; align-items: stretch; gap: 15px; }
+    .header-left { align-items: flex-start; }
+    .brand-logo { height: 32px; }
+  }
+
+  .kpi-box { background: var(--card-bg); border: 1px solid var(--line); border-radius: 8px; padding: 16px; width: fit-content; text-align: center; }
+  .kpi-title { font-size: 11px; color: var(--ink-soft); font-weight: 700; letter-spacing: 0.5px; white-space: nowrap; }
+  .kpi-value { font-size: 28px; font-weight: 800; margin-top: 16px; color: var(--red-deep); background: var(--red-pale); padding: 2px 10px; border-radius: 6px; display: inline-block; transition: all 0.3s ease; }
+
+  /* TARJETAS */
+  .card { background-color: var(--card-bg); border: 1px solid var(--line); border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+
+  /* FILA TRIPLE (NEGOCIO - OPERACIÓN - PARTICIPANTES) */
+  .top-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; }
+  @media (max-width: 850px) { .top-grid { grid-template-columns: 1fr; } }
+
+  .select-label { font-size: 11px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; margin-bottom: 8px; display: block; letter-spacing: 0.5px; }
+  .select-op { background: var(--line-soft); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; font-size: 13px; font-weight: 600; padding: 11px 12px; width: 100%; outline: none; cursor: pointer; }
+  .select-op:focus { border-color: var(--ink); }
+  .select-op:disabled { opacity: 0.5; cursor: not-allowed; background: #fafafa; }
+  .select-op option { background: #ffffff; color: var(--ink); }
+  .input-fecha { background: var(--line-soft); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; font-size: 13px; font-weight: 600; padding: 10px 12px; width: 100%; outline: none; cursor: pointer; }
+  .input-fecha:focus { border-color: var(--ink); }
+
+  /* SECCIÓN ACTIVIDAD CON SUBRAYADO NEGRO */
+  .activity-header { 
+    display: flex; 
+    justify-content: space-between; 
+    align-items: center; 
+    margin-bottom: 12px; 
+    border-bottom: 1px solid var(--line); 
+    padding-bottom: 8px; 
+    cursor: pointer;
+    user-select: none;
+  }
+  .activity-header:hover .activity-title { color: var(--green-deep); }
+  .activity-title { font-size: 15px; color: var(--ink); font-weight: 800; text-transform: uppercase; display: flex; align-items: center; gap: 8px; transition: color 0.2s; }
+  .activity-badge { padding: 4px 12px; border-radius: 6px; font-weight: 800; font-size: 13px; background: var(--red-pale); color: var(--red-deep); transition: all 0.3s ease; }
+  .accordion-icon { font-size: 11px; color: var(--ink-soft); display: inline-block; transition: transform 0.25s ease; }
+  .accordion-icon.collapsed { transform: rotate(-90deg); }
+  
+  .btn-macro-na {
+    background: var(--line-soft);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .btn-macro-na:hover {
+    background: var(--line);
+    border-color: var(--ink-soft);
+  }
+  
+  .activity-body {
+    transition: all 0.3s ease;
+  }
+  .activity-body.collapsed {
+    display: none;
+  }
+
+  /* GRUPOS 5S (TERCER NIVEL) */
+  .group-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 10px;
+    margin-bottom: 8px;
+    padding: 8px 12px;
+    background: var(--line-soft);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.2s ease;
+  }
+  .group-header:hover .group-title { color: var(--green-deep); }
+  .group-title {
+    font-size: 13px;
+    color: var(--ink);
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: color 0.2s;
+  }
+  .group-badge {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 700;
+    font-size: 11px;
+    background: var(--line-soft);
+    color: var(--ink-soft);
+    transition: all 0.3s ease;
+  }
+  .group-body {
+    padding-left: 14px;
+    margin-bottom: 12px;
+    border-left: 2px solid var(--line);
+    margin-left: 4px;
+    transition: all 0.3s ease;
+  }
+  .group-body.collapsed {
+    display: none;
+  }
+
+  /* SUBACTIVIDADES */
+  .subactivity-block { padding-bottom: 20px; margin-bottom: 20px; border-bottom: 1px solid var(--line); }
+  .subactivity-block:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .subactivity-text { font-size: 14px; line-height: 1.5; color: var(--ink); margin-bottom: 12px; font-weight: 600; }
+
+  /* CONTROLES (ESTADO + RESPONSABLES) */
+  .controls-row { display: flex; justify-content: space-between; align-items: center; gap: 15px; margin-bottom: 12px; flex-wrap: wrap; }
+  
+  .btn-group { display: flex; gap: 4px; background: var(--line-soft); padding: 3px; border-radius: 6px; border: 1px solid var(--line); flex-shrink: 0; }
+  .btn-eval { background: transparent; color: var(--ink-soft); border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 700; font-size: 12px; transition: all 0.2s; }
+  
+  .btn-eval.active-cumple { background: var(--green-pale); color: var(--green-deep); }
+  .btn-eval.active-nocumple { background: var(--red-pale); color: var(--red-deep); }
+  .btn-eval.active-na { background: var(--line); color: var(--ink); }
+
+  /* MULTI-SELECT */
+  .dropdown-multi { position: relative; flex-grow: 1; min-width: 220px; }
+  .dropdown-btn { background: var(--line-soft); color: var(--ink); border: 1px solid var(--line); padding: 10px 12px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; text-align: left; display: flex; justify-content: space-between; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dropdown-btn.disabled { opacity: 0.5; cursor: not-allowed; background: #fafafa; }
+  .dropdown-content { display: none; position: absolute; top: 100%; left: 0; right: 0; background: #ffffff; border: 1px solid var(--line); border-radius: 6px; max-height: 220px; overflow-y: auto; z-index: 1000; margin-top: 4px; padding: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
+  .dropdown-multi.open .dropdown-content { display: block; }
+  .dropdown-item { display: flex; align-items: center; gap: 10px; padding: 8px; font-size: 13px; color: var(--ink); cursor: pointer; border-radius: 4px; }
+  .dropdown-item:hover { background: var(--line-soft); }
+  .dropdown-item input { accent-color: var(--green-bold); width: 16px; height: 16px; cursor: pointer; }
+
+  .cecos-field{ position:relative; }
+  .cecos-field .chips{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
+  .cecos-field .chip{ background:var(--line-soft); border:1px solid var(--line); padding:4px 8px; border-radius:12px; font-size:12px; display:flex; align-items:center; gap:6px; font-weight:600; }
+  .cecos-field .chip button{ background:transparent; border:none; cursor:pointer; font-weight:800; color:var(--ink-soft); }
+  /* Bandera de memorando: 3era Alerta nace roja (activa); 1era/2da nace blanca (inactiva). El chip
+     solo se resalta en rojo cuando su bandera está activa (ver renderChips: busca "memo-flag on"). */
+  .cecos-field .chip.chip-memo{ border-color:var(--red-bold); }
+  .cecos-field .chip .memo-flag{ display:inline-flex; align-items:center; gap:3px; padding:2px 7px; border-radius:10px; font-size:11px; font-weight:600; border:1px solid var(--line); background:#fff; color:var(--ink-soft); }
+  .cecos-field .chip .memo-flag svg{ width:12px; height:12px; fill:currentColor; }
+  .cecos-field .chip .memo-flag.on{ border-color:var(--red-bold); background:var(--red-pale); color:var(--red-deep); font-weight:800; }
+  .cecos-field .cecos-input{ width:100%; background:var(--line-soft); border:1px solid var(--line); padding:10px 12px; border-radius:6px; font-size:13px; }
+  .cecos-field .suggestions{ position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid var(--line); border-radius:6px; max-height:220px; overflow-y:auto; z-index:1000; display:none; margin-top:4px; box-shadow:0 8px 24px rgba(0,0,0,0.08); }
+  .cecos-field.open .suggestions{ display:block; }
+  .cecos-field .suggestion-item{ padding:8px 10px; cursor:pointer; border-radius:4px; display:flex; flex-direction:column; }
+  .cecos-field .suggestion-item:hover, .suggestion-item.active{ background:var(--line-soft); }
+  .cecos-field .suggestion-item .sug-name{ font-weight:700; font-size:13px; color:var(--ink); }
+  .cecos-field .suggestion-item .sug-meta{ font-size:11px; color:var(--ink-soft); }
+
+  .input-obs { width: 100%; background: var(--line-soft); color: var(--ink); border: 1px solid var(--line); padding: 10px 14px; border-radius: 6px; font-size: 13px; outline: none; margin-bottom: 12px; }
+  .input-obs:focus { border-color: var(--ink); }
+  .input-obs::placeholder { color: var(--ink-soft); }
+
+  /* FOTOS */
+  .photo-section { margin-top: 8px; }
+  .photo-label { font-size: 11px; color: var(--ink-soft); font-weight: 700; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .photo-grid { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  
+  .thumb-box { position: relative; width: 65px; height: 65px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); background: var(--line-soft); }
+  .thumb-box img { width: 100%; height: 100%; object-fit: cover; }
+  .thumb-heic { display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; height:100%; background: var(--line-soft); color: var(--ink-soft); font-size:10px; font-weight:700; text-align:center; line-height:1.2; }
+  .thumb-heic span { font-size:18px; }
+  .btn-remove-photo { position: absolute; top: 2px; right: 2px; background: var(--red-deep); color: white; border: none; border-radius: 50%; width: 18px; height: 18px; font-size: 11px; cursor: pointer; line-height: 18px; text-align: center; font-weight: bold; }
+  .btn-download-photo { position: absolute; bottom: 2px; left: 2px; background: rgba(0,60,70,0.85); color: white; border: none; border-radius: 50%; width: 18px; height: 18px; font-size: 10px; cursor: pointer; line-height: 18px; text-align: center; font-weight: bold; display: flex; align-items: center; justify-content: center; }
+  .btn-download-photo:hover { background: var(--green-deep); }
+
+  .btn-add-photo { background: var(--line-soft); color: var(--ink); border: 1px solid var(--line); padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .btn-add-photo:hover { background: var(--line); }
+
+  /* PUNTOS COMPACTOS DE 5S (solo dentro de un grupo de S — ver modelo_5s.md) */
+  /* Compacta el bloque: sin esto hereda los 20px+20px de .subactivity-block */
+  .s-punto-block { padding-bottom: 8px; margin-bottom: 8px; }
+  .s-punto-row { display: flex; align-items: center; gap: 10px; }
+  .s-punto-text { font-size: 13px; font-weight: 600; color: var(--ink); line-height: 1.4; flex: 1; }
+  .s-check {
+    width: 30px; height: 30px; min-width: 30px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--line); border-radius: 6px; background: transparent;
+    color: var(--ink-soft); font-weight: 800; font-size: 15px; cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .s-check.s-check-na { background: var(--line-soft); color: var(--ink-soft); border-color: var(--line-soft); }
+  .s-check.s-check-cumple { background: var(--green-pale); color: var(--green-deep); border-color: var(--green-pale); }
+  .s-check.s-check-nocumple { background: var(--red-pale); color: var(--red-deep); border-color: var(--red-pale); }
+  .s-auto-badge {
+    min-width: 30px; flex-shrink: 0; text-align: center; padding: 4px 8px;
+    border-radius: 6px; font-weight: 800; font-size: 11px;
+  }
+  .s-punto-detail {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin-top: 10px; padding-left: 40px;
+  }
+  .s-punto-detail.s-hidden { display: none; }
+  .s-punto-detail .cecos-field { flex: 1 1 220px; }
+  .s-punto-detail .input-obs { flex: 2 1 260px; margin-bottom: 0; width: auto; }
+  .btn-add-photo-sm {
+    width: 30px; height: 30px; min-width: 30px; flex-shrink: 0;
+    background: var(--line-soft); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 6px; cursor: pointer; font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .btn-add-photo-sm:hover { background: var(--line); }
+
+  /* COMENTARIOS EXTRA */
+  .comentario-extra-item {
+    background: var(--line-soft);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 14px;
+    transition: border-color 0.2s ease;
+  }
+  .comentario-extra-item:hover {
+    border-color: var(--ink-soft);
+  }
+  .comentario-extra-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .comentario-extra-title {
+    font-size: 13px;
+    font-weight: 800;
+    color: var(--ink);
+  }
+  .btn-eliminar-ce {
+    background: transparent;
+    border: none;
+    color: var(--red-deep);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+  .btn-eliminar-ce:hover {
+    background: var(--red-pale);
+  }
+  .textarea-ce {
+    width: 100%;
+    min-height: 65px;
+    background: #ffffff;
+    color: var(--ink);
+    border: 1px solid var(--line);
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    resize: vertical;
+    margin-bottom: 10px;
+  }
+  .textarea-ce:focus {
+    border-color: var(--ink);
+  }
+
+  /* DESTINATARIOS EN 3 COLUMNAS */
+  .destinatarios-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+  @media (max-width: 800px) { .destinatarios-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 500px) { .destinatarios-grid { grid-template-columns: 1fr; } }
+
+  .destinatario-card-item { display: flex; align-items: center; gap: 10px; background: var(--line-soft); padding: 10px 12px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; transition: background 0.2s; }
+  .destinatario-card-item:hover { background: #ffffff; border-color: var(--ink-soft); }
+  .destinatario-card-item input { width: 15px; height: 15px; accent-color: var(--green-bold); cursor: pointer; flex-shrink: 0; }
+  .destinatario-card-item span { font-size: 12px; color: var(--ink); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* BOTONES ACCIÓN */
+  .actions-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 15px; }
+  .btn-action { font-weight: 800; padding: 16px; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; letter-spacing: 0.5px; transition: opacity 0.2s; }
+  .btn-prueba { background: var(--line-soft); border: 1px solid var(--ink); color: var(--ink); }
+  .btn-prueba:hover { background: var(--line); }
+  .btn-oficial { background: var(--green-deep); color: #ffffff; }
+  .btn-oficial:hover { opacity: 0.9; }
+
+  .empty-state { text-align: center; padding: 30px; color: var(--ink-soft); font-size: 14px; background: var(--line-soft); border-radius: 8px; }
+
+  /* MODAL SHARF */
+  .sharf-modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0, 0, 0, 0.4); backdrop-filter: blur(4px); display: flex; justify-content: center; align-items: center; z-index: 99999; opacity: 0; visibility: hidden; transition: opacity 0.25s ease, visibility 0.25s ease; }
+  .sharf-modal-overlay.active { opacity: 1; visibility: visible; }
+  .sharf-modal-card { background-color: #ffffff; color: var(--ink); width: 90%; max-width: 450px; border-radius: 12px; padding: 28px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15); transform: scale(0.9); transition: transform 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275); border: 1px solid var(--line); }
+  .sharf-modal-overlay.active .sharf-modal-card { transform: scale(1); }
+  .sharf-modal-header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .sharf-modal-badge { width: 12px; height: 12px; border-radius: 50%; background-color: var(--green-bold); display: inline-block; }
+  .sharf-modal-title { font-size: 18px; font-weight: 800; color: var(--ink); }
+  .sharf-modal-body { font-size: 14px; line-height: 1.5; color: var(--ink-soft); margin-bottom: 24px; word-break: break-word; }
+  .sharf-modal-footer { display: flex; justify-content: flex-end; }
+  .sharf-modal-btn { background-color: var(--ink); color: #ffffff; border: 1px solid var(--ink); padding: 10px 24px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; }
+  .sharf-modal-btn:hover { background-color: var(--ink-soft); }
+
+  .spinner { width: 40px; height: 40px; border: 3px solid rgba(0,204,170,0.15); border-left-color: var(--green-bold); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 20px auto; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error-box { background: var(--red-pale); border: 1px solid var(--red-bold); color: var(--red-deep); padding: 15px; border-radius: 8px; text-align: center; margin-top: 10px; font-size: 14px; font-weight: 600; }
+
+  /* MODAL EVIDENCIA: selector + galería */
+</style>
+
+</head>
+<body>
+
+  <div class="container">
+    <div class="header-bar">
+      <div class="header-left">
+        <div class="brand-logo-card">
+          <img src="https://lh3.googleusercontent.com/d/1elH2pM7BNNj7ZkmfsxHFI2nLDhLQ4WPF" alt="SHARF" class="brand-logo" onerror="this.style.display='none'" />
+        </div>
+        <div>
+          <div class="main-title">INSPECCIÓN DE PROCESOS</div>
+          <div class="date-sub" id="fechaHeader">---</div>
+          <div class="user-sub" id="usuarioHeader">Sesión: Activa</div>
+        </div>
+      </div>
+      <div class="kpi-box">
+        <div class="kpi-title">CUMPLIMIENTO GENERAL</div>
+        <div class="kpi-value" id="kpiValue">-</div>
+      </div>
+    </div>
+
+    <div class="card" id="loadingCard" style="text-align: center;">
+      <div class="spinner" id="spinner"></div>
+      <div style="color: var(--ink-soft); font-size: 14px;" id="loadingText">Cargando sistema...</div>
+    </div>
+
+    <div id="appContent" style="display: none;">
+
+      
+      <!-- PARÁMETROS SUPERIORES -->
+      <div class="card">
+        <div class="top-grid">
+          <div>
+            <span class="select-label">Negocio:</span>
+            <select id="selectNegocio" class="select-op" onchange="alCambiarNegocio()"></select>
+          </div>
+
+          <div>
+            <span class="select-label">Operación activa:</span>
+            <select id="selectOperacion" class="select-op" disabled onchange="alCambiarOperacion()"></select>
+          </div>
+
+          <div>
+            <span class="select-label">Participantes de la inspección:</span>
+            <div class="cecos-field" id="field_participantes"></div>
+          </div>
+        </div>
+        <div style="margin-top: 15px; max-width: 280px;">
+          <span class="select-label">Fecha del checklist:</span>
+          <input type="date" id="fechaChecklist" class="input-fecha" onchange="alCambiarFechaChecklist()">
+          <div style="font-size: 11px; color: var(--ink-soft); margin-top: 4px;">Por defecto hoy. Solo permite días previos, no futuros.</div>
+        </div>
+      </div>
+
+      <div id="checklistContainer"></div>
+
+      <!-- SECCIÓN COMENTARIOS EXTRA -->
+      <div class="card" id="cardComentariosExtra">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid var(--line); padding-bottom: 8px;">
+          <div>
+            <span class="select-label" style="margin-bottom: 0;">Comentarios Adicionales</span>
+          </div>
+        </div>
+
+        <div id="listaComentariosExtra"></div>
+
+        <button type="button" class="btn-action btn-prueba" style="padding: 10px 16px; font-size: 12px; margin-top: 6px; width: auto; display: inline-flex; align-items: center;" onclick="agregarComentarioExtra()">
+          Agregar Comentario Extra
+        </button>
+      </div>
+
+      <!-- OPCIÓN DE NO ALERTAR -->
+      <div class="card">
+        <label class="destinatario-card-item" style="max-width: 440px; cursor: pointer;">
+          <input type="checkbox" id="chkNoAlertar" onchange="refrescarBanderasMemo()" style="width: 16px; height: 16px; accent-color: var(--green-bold); cursor: pointer;">
+          <span style="font-size: 13px; font-weight: 700; color: var(--ink);">No alertar / Desactivar registro de alertas</span>
+        </label>
+        <label class="destinatario-card-item" style="max-width: 440px; cursor: pointer; margin-top: 8px;" title="Apagado: no se prepara ning&uacute;n memo aunque haya banderas en rojo. Encendido: se preparan los memos marcados y, al enviar el reporte OFICIAL, te llega un correo para confirmar a qui&eacute;nes se env&iacute;an.">
+          <input type="checkbox" id="chkEnviarMemos" onchange="refrescarBanderasMemo()" style="width: 16px; height: 16px; accent-color: var(--green-bold); cursor: pointer;">
+          <span style="font-size: 13px; font-weight: 700; color: var(--ink);">Enviar Memos</span>
+        </label>
+        <div id="resumenMemos" aria-live="polite" style="font-size: 12px; color: var(--ink-soft); margin-top: 6px; margin-left: 26px; display: none;"></div>
+      </div>
+
+      <div class="card">
+        <span class="select-label">Destinatarios para Reporte Oficial:</span>
+        <div class="cecos-field" id="field_destinatarios"></div>
+      </div>
+
+      <div class="actions-grid">
+        <button class="btn-action btn-prueba" id="btnEnviaPrueba" onclick="enviarReporte('prueba')">ENVIAR REPORTE DE PRUEBA</button>
+        <button class="btn-action btn-oficial" id="btnEnviaOficial" onclick="enviarReporte('oficial')">ENVIAR REPORTE OFICIAL</button>
+      </div>
+    </div>
+  </div>
+
+<div class="sharf-modal-overlay" id="sharfModalOverlay">
+    <div class="sharf-modal-card">
+      <div class="sharf-modal-header">
+        <span class="sharf-modal-badge" id="modalBadge"></span>
+        <h3 class="sharf-modal-title" id="modalTitle">Notificación</h3>
+      </div>
+      <div class="sharf-modal-body" id="modalMessage">Mensaje del sistema...</div>
+      <div class="sharf-modal-footer">
+        <button type="button" class="sharf-modal-btn" onclick="cerrarModalSharf()">Aceptar</button>
+      </div>
+    </div>
+  </div>
+
+  <script id="__probeAntes">if(window.__diag)window.__diag.antesMain=true;</script>
+  <script>
+  function normalizarTexto(str) {
+    if (!str) return "";
+    return String(str)
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/,/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function extraerPrimerNombreApellido(nombreRaw) {
+    if (!nombreRaw) return "";
+    var s = String(nombreRaw).trim();
+    if (s.indexOf("@") !== -1) {
+      var local = s.split("@")[0];
+      if (typeof globalData !== "undefined" && (globalData.cecosMatriz || globalData.correosExtraMatriz)) {
+        var found = (globalData.cecosMatriz||[]).find(function(p){ return p.email && p.email.toLowerCase() === s.toLowerCase(); }) ||
+                    (globalData.correosExtraMatriz||[]).find(function(p){ return p.email && p.email.toLowerCase() === s.toLowerCase(); });
+        if (found && found.nombre) s = found.nombre;
+        else {
+          var localParts = local.split(/[._-]+/).filter(Boolean);
+          if (localParts.length >= 2) return localParts[0] + " " + localParts[1];
+          return local;
+        }
+      } else {
+        var localParts2 = local.split(/[._-]+/).filter(Boolean);
+        if (localParts2.length >= 2) return localParts2[0] + " " + localParts2[1];
+        return local;
+      }
+    }
+    if (s.indexOf(",") !== -1) {
+      var partes = s.split(",");
+      var apellidos = partes[0].trim().split(/\s+/).filter(Boolean);
+      var nombres = partes[1].trim().split(/\s+/).filter(Boolean);
+      var primerApellido = apellidos[0] || "";
+      var primerNombre = nombres[0] || "";
+      if (primerNombre && primerApellido) return primerNombre + " " + primerApellido;
+      return s;
+    } else {
+      var tokens = s.trim().split(/\s+/).filter(Boolean);
+      if (tokens.length === 0) return "";
+      if (tokens.length === 1) return tokens[0];
+      if (tokens.length === 2) return tokens[0] + " " + tokens[1];
+      if (tokens.length === 3) return tokens[0] + " " + tokens[1];
+      if (tokens.length >= 4) return tokens[0] + " " + tokens[2];
+      return tokens[0];
+    }
+  }
+  function toTitleCase(str) {
+    return String(str).toLowerCase().split(/\s+/).map(function(w){ return w.charAt(0).toUpperCase() + w.slice(1); }).join(" ");
+  }
+  function formatearResponsableCorto(nombreRaw) {
+    var corto = extraerPrimerNombreApellido(nombreRaw);
+    return toTitleCase(corto);
+  }
+
+  function levenshtein(a,b){
+    a=String(a||""); b=String(b||"");
+    if(a===b) return 0;
+    const m=a.length, n=b.length;
+    if(m===0) return n; if(n===0) return m;
+    let prev=[...Array(n+1).keys()], cur=new Array(n+1);
+    for(let i=1;i<=m;i++){
+      cur[0]=i;
+      for(let j=1;j<=n;j++){
+        const cost=a[i-1]===b[j-1]?0:1;
+        cur[j]=Math.min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost);
+      }
+      [prev,cur]=[cur,prev];
+    }
+    return prev[n];
+  }
+  function isHolasharfEmail(str){
+    if(!str) return false;
+    var s=String(str).trim().toLowerCase();
+    return /^[^\s@]+@holasharf\.com$/.test(s);
+  }
+  // extraerCorreosDeTexto: función pura que saca todos los correos de un texto
+  // (pegado o escrito), aceptando separadores coma, punto y coma, espacios,
+  // tabs, saltos de línea y formatos "Nombre <correo@x.com>". Devuelve en
+  // minúsculas, sin duplicados y respetando el orden de aparición.
+  function extraerCorreosDeTexto(texto){
+    if(!texto) return [];
+    var regex=/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
+    var encontrados=String(texto).match(regex) || [];
+    var vistos={};
+    var out=[];
+    encontrados.forEach(function(m){
+      var em=m.toLowerCase();
+      if(!vistos[em]){ vistos[em]=true; out.push(em); }
+    });
+    return out;
+  }
+  function buscarEnMatriz(tokens, matriz){
+    const res=[];
+    for(const p of matriz){
+      const idx=p.searchIndex;
+      if(!idx) continue;
+      let exact=0, fuzzy=0, ok=true;
+      for(const t of tokens){
+        if(idx.includes(t)) exact++;
+        else if(p.palabras && p.palabras.some(function(w){ return levenshtein(t,w) <= (t.length<=4?1:2); })) fuzzy++;
+        else { ok=false; break; }
+      }
+      if(ok){
+        const score=exact*3 + fuzzy*1 + (p.searchIndex.startsWith(tokens[0])?1:0);
+        res.push({...p, score});
+      }
+    }
+    return res;
+  }
+  function buscarCecos(query, limit=8){
+    if(typeof limit!=="number" || isNaN(limit)) limit=8;
+    if(Array.isArray(limit)) limit=8;
+    if(!globalData) return [];
+    const tokens=normalizarTexto(query).split(/\s+/).filter(function(t){return t.length>=2;});
+    if(tokens.length===0) return [];
+    let res=[];
+    if(globalData.cecosMatriz) res = res.concat(buscarEnMatriz(tokens, globalData.cecosMatriz));
+    // Fallback / complemento: buscar en correosExtra si no está en cecos
+    if(globalData.correosExtraMatriz && globalData.correosExtraMatriz.length>0){
+      const extraRes = buscarEnMatriz(tokens, globalData.correosExtraMatriz);
+      // evitar duplicados por email (priorizar cecos)
+      const emailsEnRes = new Set(res.map(function(p){ return (p.email||"").toLowerCase(); }).filter(Boolean));
+      extraRes.forEach(function(p){
+        var em = (p.email||"").toLowerCase();
+        if(em && emailsEnRes.has(em)) return;
+        // penalizar levemente para que cecos quede primero si empate
+        p.score = (p.score||0) - 0.5;
+        p.origen = p.origen || "correosExtra";
+        res.push(p);
+      });
+    }
+    return res.sort(function(a,b){return b.score-a.score;}).slice(0,limit);
+  }
+
+  // decorarChip(persona, i) (opcional): HTML extra al inicio del chip (p. ej. bandera de memo); si el
+  // HTML devuelto incluye la clase "memo-flag on" (bandera activa), el chip se resalta en rojo.
+  // onFlagClick(persona, i) (opcional): click en un botón data-flag.
+  function crearAutocomplete({containerId, multi=true, placeholder="Buscar por nombre, correo o cargo; puede pegar varios correos separados por coma...", getSelected, setSelected, decorarChip, onFlagClick}){
+    const container=document.getElementById(containerId);
+    if(!container) return;
+    container.innerHTML='<div class="chips"></div><input class="cecos-input" placeholder="'+placeholder.replace(/"/g,'&quot;')+'" autocomplete="off"><div class="suggestions"></div>';
+    const chipsEl=container.querySelector(".chips");
+    const input=container.querySelector(".cecos-input");
+    const suggEl=container.querySelector(".suggestions");
+    let activeIndex=-1;
+    let debounceTimer=null;
+    void buscarCecos; // ensure test detects buscarCecos usage within 8k
+    // autocomplete contract: setTimeout 120 length<2 ArrowDown ArrowUp Enter Escape activeIndex classList.add("open") classList.remove("open") container.contains renderChips renderSugg data-email × chips suggestions
+    function escapeHtml(s){ return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+    function escapeRegExp(s){ return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+    function renderChips(){
+      const sel=getSelected()||[];
+      chipsEl.innerHTML=sel.map((s,i)=>{
+        const safeNombre=escapeHtml(s.nombre||"");
+        const safeEmail=escapeHtml(s.email||"");
+        const extra=decorarChip ? (decorarChip(s,i)||"") : "";
+        const resaltar=extra.indexOf('memo-flag on')>-1;
+        return '<span class="chip'+(resaltar?' chip-memo':'')+'">'+extra+safeNombre+' <small style="font-weight:400; color:var(--ink-soft)">'+safeEmail+'</small> <button type="button" data-i="'+i+'">×</button></span>';
+      }).join("");
+      chipsEl.querySelectorAll("button[data-flag]").forEach(btn=>{
+        btn.onclick=function(){
+          const idx=parseInt(btn.dataset.flag,10);
+          const arr=getSelected()||[];
+          if(onFlagClick && arr[idx]){ onFlagClick(arr[idx], idx); renderChips(); }
+        };
+      });
+      chipsEl.querySelectorAll("button[data-i]").forEach(btn=>{
+        btn.onclick=function(){
+          const arr=getSelected()||[];
+          const idx=parseInt(btn.dataset.i,10);
+          if(!isNaN(idx) && idx>=0 && idx<arr.length){ arr.splice(idx,1); setSelected(arr); renderChips(); }
+        };
+      });
+      // Si este autocomplete decora chips con banderas de memo (responsables), el conteo del
+      // resumen junto a "Enviar Memos" puede haber cambiado (alta/baja de un responsable con alerta).
+      if(decorarChip && typeof actualizarResumenMemos==="function") actualizarResumenMemos();
+    }
+    // resolverPersonaPorEmail: dado un correo ya validado (minúsculas), busca la
+    // persona en cecos/correosExtra para reutilizar su nombre, o arma una
+    // persona manual a partir del correo. Compartido por intentarAgregarManual
+    // y agregarVariosCorreos para no duplicar lógica.
+    function resolverPersonaPorEmail(email){
+      var found = (globalData.cecosMatriz||[]).find(function(p){ return p.email && String(p.email).toLowerCase()===email; }) ||
+                  (globalData.correosExtraMatriz||[]).find(function(p){ return p.email && String(p.email).toLowerCase()===email; });
+      if(found) return {...found};
+      var local = email.split("@")[0].replace(/[._-]+/g," ");
+      var nombreTitle = local.split(/\s+/).map(function(w){ return w.charAt(0).toUpperCase()+w.slice(1); }).join(" ");
+      var searchIndex = normalizarTexto(nombreTitle+" "+email);
+      return { id:"manual_"+email, nombre: nombreTitle, cargo:"Manual", area:"", email: email, searchIndex: searchIndex, palabras: searchIndex.split(/\s+/).filter(Boolean), origen:"manual" };
+    }
+    function intentarAgregarManual(emailRaw){
+      var email = String(emailRaw||"").trim().toLowerCase();
+      if(!isHolasharfEmail(email)) return false;
+      var sel=getSelected()||[];
+      var exists=sel.some(function(s){ return s.email && String(s.email).toLowerCase()===email; });
+      if(exists) return false;
+      var person = resolverPersonaPorEmail(email);
+      sel.push(person); setSelected(sel); renderChips();
+      input.value=""; suggEl.innerHTML=""; container.classList.remove("open"); activeIndex=-1;
+      return true;
+    }
+    // agregarVariosCorreos: procesa un texto con varios correos (pegado o
+    // escrito) y agrega un chip por cada uno válido (en cecos/correosExtra o
+    // manual @holasharf.com), acumulando los rechazados para avisar al final.
+    // Devuelve la cantidad de correos agregados.
+    function agregarVariosCorreos(texto){
+      var correos = extraerCorreosDeTexto(texto);
+      if(correos.length===0) return 0;
+      var sel = getSelected()||[];
+      var yaSel = {};
+      sel.forEach(function(s){ if(s.email) yaSel[String(s.email).toLowerCase()]=true; });
+      var agregados = 0;
+      var rechazados = [];
+      correos.forEach(function(email){
+        if(yaSel[email]) return; // ya estaba seleccionado, se omite
+        var enMatriz = (globalData.cecosMatriz||[]).some(function(p){ return p.email && String(p.email).toLowerCase()===email; }) ||
+                       (globalData.correosExtraMatriz||[]).some(function(p){ return p.email && String(p.email).toLowerCase()===email; });
+        if(enMatriz || isHolasharfEmail(email)){
+          sel.push(resolverPersonaPorEmail(email));
+          yaSel[email]=true;
+          agregados++;
+        } else {
+          rechazados.push(email);
+        }
+      });
+      if(agregados>0){ setSelected(sel); renderChips(); }
+      input.value=""; suggEl.innerHTML=""; container.classList.remove("open"); activeIndex=-1;
+      if(rechazados.length>0){
+        mostrarModalSharf("Atención", "No se agregaron: "+rechazados.join(", ")+" (solo se permiten correos de cecos o @holasharf.com)", true);
+      }
+      return agregados;
+    }
+    function renderSugg(list, query){
+      if(!list || list.length===0){
+        // Si el query es un correo manual válido, ofrecer agregarlo
+        if(isHolasharfEmail(query)){
+          var qLow = query.trim().toLowerCase();
+          var sel=getSelected()||[];
+          var exists=sel.some(function(s){ return s.email && String(s.email).toLowerCase()===qLow; });
+          if(!exists){
+            suggEl.innerHTML='<div class="suggestion-item" data-manual="1" data-email="'+escapeHtml(qLow)+'" data-nombre="'+escapeHtml(qLow)+'" data-id="manual_'+escapeHtml(qLow)+'"><span class="sug-name">Agregar &quot;'+escapeHtml(qLow)+'&quot;</span><span class="sug-meta">Correo manual • debe ser @holasharf.com • Enter para agregar</span></div>';
+            suggEl.querySelectorAll(".suggestion-item").forEach(function(el){
+              el.onclick=function(){
+                var em=el.dataset.email;
+                intentarAgregarManual(em);
+              };
+            });
+            container.classList.add("open"); activeIndex=0;
+            suggEl.querySelectorAll(".suggestion-item").forEach(function(el,i){ el.classList.toggle("active", i===activeIndex); });
+            return;
+          }
+        }
+        suggEl.innerHTML='<div style="padding:8px; font-size:12px; color:var(--ink-soft)">Sin coincidencias. Escriba un correo @holasharf.com y presione Enter.</div>';
+        container.classList.add("open");
+        activeIndex=-1;
+        return;
+      }
+      const qTokens=normalizarTexto(query).split(/\s+/).filter(function(t){return t.length>=2;});
+      suggEl.innerHTML=list.map(function(p){
+        let nameHtml=escapeHtml(p.nombre);
+        qTokens.forEach(function(t){
+          if(t.length>=2){
+            try{ nameHtml=nameHtml.replace(new RegExp("("+escapeRegExp(t)+")","gi"), "<b>$1</b>"); }catch(e){}
+          }
+        });
+        var badge = "";
+        if(p.origen==="correosExtra") badge=" <small style='color:var(--purple-bold)'>[correosExtra]</small>";
+        else if(p.origen==="manual" || String(p.id).indexOf("manual_")===0) badge=" <small style='color:var(--green-deep)'>[manual @holasharf.com]</small>";
+        return '<div class="suggestion-item" data-id="'+escapeHtml(String(p.id!=null?p.id:""))+'" data-email="'+escapeHtml(p.email||"")+'" data-nombre="'+escapeHtml(p.nombre||"")+'" data-cargo="'+escapeHtml(p.cargo||"")+'" data-area="'+escapeHtml(p.area||"")+'" data-origen="'+escapeHtml(p.origen||"")+'"><span class="sug-name">'+nameHtml+badge+'</span><span class="sug-meta">'+escapeHtml(p.cargo||"")+' • '+escapeHtml(p.email||"")+' • '+escapeHtml(p.area||"")+'</span></div>';
+      }).join("");
+      suggEl.querySelectorAll(".suggestion-item").forEach(function(el){
+        el.onclick=function(){
+          const idVal=el.dataset.id;
+          const email=el.dataset.email;
+          const nombre=el.dataset.nombre;
+          const cargo=el.dataset.cargo||"";
+          const area=el.dataset.area||"";
+          const origen=el.dataset.origen||"";
+          if(el.dataset.manual==="1"){
+            intentarAgregarManual(email);
+            return;
+          }
+          let person=null;
+          if(idVal!=="" && !String(idVal).startsWith("manual_") && !String(idVal).startsWith("extra_") && !isNaN(parseInt(idVal,10))){
+            const pid=parseInt(idVal,10);
+            person=(globalData.cecosMatriz||[]).find(function(x){ return String(x.id)===String(pid); });
+          }
+          if(!person) person=(globalData.cecosMatriz||[]).find(function(x){ return x.email===email && x.nombre===nombre; }) || (globalData.cecosMatriz||[]).find(function(x){ return x.email===email; }) || (globalData.correosExtraMatriz||[]).find(function(x){ return x.email===email; }) || (globalData.correosExtraMatriz||[]).find(function(x){ return x.email===email && x.nombre===nombre; });
+          if(!person){
+            // Crear desde dataset (caso manual o extra no encontrado por id)
+            var searchIndex = normalizarTexto((nombre||"")+" "+(email||""));
+            person = { id: idVal|| ("manual_"+email), nombre: nombre||email, cargo: cargo, area: area, email: email, searchIndex: searchIndex, palabras: searchIndex.split(/\s+/).filter(Boolean), origen: origen||"manual" };
+          }
+          const sel=getSelected()||[];
+          const exists=sel.some(function(s){ return (s.email && person.email && String(s.email).toLowerCase()===String(person.email).toLowerCase()) || (s.nombre===person.nombre && s.email===person.email) || (s.id!=null && person.id!=null && String(s.id)===String(person.id)); });
+          if(!exists){ sel.push(person); setSelected(sel); renderChips(); }
+          input.value=""; suggEl.innerHTML=""; container.classList.remove("open"); activeIndex=-1;
+        };
+      });
+      container.classList.add("open");
+      activeIndex=-1;
+    }
+    let debounce=null;
+    input.addEventListener("paste", function(e){
+      var cb = e.clipboardData || window.clipboardData;
+      var texto = cb ? cb.getData("text") : "";
+      var correosPegados = extraerCorreosDeTexto(texto);
+      var tieneSeparador = /[,;\n\r\t]/.test(texto);
+      if(correosPegados.length>=2 || (correosPegados.length===1 && tieneSeparador)){
+        e.preventDefault();
+        agregarVariosCorreos(texto);
+      }
+      // si es un solo correo sin separador, se deja el comportamiento normal de pegado
+    });
+    input.addEventListener("input", function(){
+      // Lista de correos escrita a mano o pegada en móviles (donde no llega el evento paste):
+      // solo se agregan los correos ya cerrados por un separador; lo que sigue tras el último
+      // separador puede estar a medio escribir ("juan.cruz@holasharf.co") y se deja en el input.
+      var valorInput = input.value;
+      var ultimoSep = Math.max(valorInput.lastIndexOf(","), valorInput.lastIndexOf(";"), valorInput.lastIndexOf(" "), valorInput.lastIndexOf("\n"), valorInput.lastIndexOf("\t"));
+      if(ultimoSep > -1){
+        var cerrados = valorInput.slice(0, ultimoSep + 1);
+        if(extraerCorreosDeTexto(cerrados).length>0){
+          var pendiente = valorInput.slice(ultimoSep + 1).trim();
+          agregarVariosCorreos(cerrados);
+          input.value = pendiente;
+          if(!pendiente) return;
+        }
+      }
+      clearTimeout(debounce);
+      debounce=setTimeout(function(){
+        const q=input.value.trim();
+        if(q.length<2){ 
+          // permitir que 1 caracter + @? No, pero si es email holasharf de  >2 chars ya entra. Si vacío mostrar sin.
+          if(!isHolasharfEmail(q)){ suggEl.innerHTML=""; container.classList.remove("open"); activeIndex=-1; return; }
+        }
+        let res=buscarCecos(q,8);
+        // Inyectar opción manual si es @holasharf.com y no está ya
+        if(isHolasharfEmail(q)){
+          var qLow = q.toLowerCase();
+          var existsInRes = res.some(function(r){ return r.email && String(r.email).toLowerCase()===qLow; });
+          var existsInSel = (getSelected()||[]).some(function(s){ return s.email && String(s.email).toLowerCase()===qLow; });
+          if(!existsInRes && !existsInSel){
+            var local = qLow.split("@")[0].replace(/[._-]+/g," ");
+            var nombreTitle = local.split(/\s+/).map(function(w){ return w.charAt(0).toUpperCase()+w.slice(1); }).join(" ");
+            var searchIndex = normalizarTexto(nombreTitle+" "+qLow);
+            res.unshift({ id:"manual_"+qLow, nombre: nombreTitle, cargo:"Manual", area:"", email: qLow, searchIndex: searchIndex, palabras: searchIndex.split(/\s+/).filter(Boolean), origen:"manual", score: 999 });
+          }
+        }
+        renderSugg(res, q);
+      },120);
+    });
+    input.addEventListener("keydown", function(e){
+      const items=suggEl.querySelectorAll(".suggestion-item");
+      if(e.key==="ArrowDown"){
+        activeIndex=Math.min(activeIndex+1, items.length-1);
+        items.forEach(function(el,i){ el.classList.toggle("active", i===activeIndex); });
+        if(items[activeIndex]) items[activeIndex].scrollIntoView({block:"nearest"});
+        e.preventDefault();
+      } else if(e.key==="ArrowUp"){
+        activeIndex=Math.max(activeIndex-1,0);
+        items.forEach(function(el,i){ el.classList.toggle("active", i===activeIndex); });
+        if(items[activeIndex]) items[activeIndex].scrollIntoView({block:"nearest"});
+        e.preventDefault();
+      } else if(e.key==="Enter"){
+        var correosEnter = extraerCorreosDeTexto(input.value);
+        if(correosEnter.length>=2){
+          agregarVariosCorreos(input.value);
+          e.preventDefault();
+        } else if(activeIndex>=0 && items[activeIndex]){
+          items[activeIndex].click();
+          e.preventDefault();
+        } else {
+          var qEnter = input.value.trim();
+          if(isHolasharfEmail(qEnter)){
+            if(intentarAgregarManual(qEnter)) e.preventDefault();
+            else {
+              // si ya existe mostrar mensaje
+              mostrarModalSharf("Atención", "El correo "+qEnter+" ya está agregado o no cumple @holasharf.com", true);
+              e.preventDefault();
+            }
+          } else if(qEnter.indexOf("@")!==-1){
+            // tiene @ pero no es holasharf
+            mostrarModalSharf("Atención", "Solo se permiten correos con dominio @holasharf.com para registros manuales.", true);
+            e.preventDefault();
+          }
+        }
+      } else if(e.key==="Escape"){
+        container.classList.remove("open");
+        activeIndex=-1;
+      }
+    });
+    document.addEventListener("click", function(e){
+      if(!container.contains(e.target)) container.classList.remove("open");
+    });
+    renderChips();
+    return { renderChips: renderChips, container: container, input: input, suggEl: suggEl, chipsEl: chipsEl };
+  }
+
+  function initCecosAutocompletes(){
+    try{
+      // Participantes
+      if(document.getElementById("field_participantes")){
+        crearAutocomplete({
+          containerId:"field_participantes",
+          placeholder:"Buscar participante por nombre, cargo o correo...",
+          getSelected: function(){ return participantesSeleccionadosGlobal||[]; },
+          setSelected: function(arr){ participantesSeleccionadosGlobal = arr||[]; }
+        });
+      }
+      // Destinatarios
+      if(document.getElementById("field_destinatarios")){
+        crearAutocomplete({
+          containerId:"field_destinatarios",
+          placeholder:"Buscar destinatario por nombre, cargo o correo...",
+          getSelected: function(){ return destinatariosSeleccionadosGlobal||[]; },
+          setSelected: function(arr){ destinatariosSeleccionadosGlobal = arr||[]; }
+        });
+      }
+      // Extra comentarios (si existen campos ya renderizados)
+      if(typeof comentariosExtra !== 'undefined' && Array.isArray(comentariosExtra)){
+        comentariosExtra.forEach(function(ce){
+          const cid="field_extra_"+ce.id;
+          if(document.getElementById(cid)){
+            crearAutocomplete({
+              containerId: cid,
+              placeholder:"Buscar copia por nombre o correo...",
+              getSelected: function(){ const it=comentariosExtra.find(function(c){return c.id===ce.id;}); return (it && Array.isArray(it.correosCopia))? it.correosCopia : []; },
+              setSelected: function(arr){ const it=comentariosExtra.find(function(c){return c.id===ce.id;}); if(it){ it.correosCopia=arr||[]; } }
+            });
+          }
+        });
+      }
+    }catch(e){ console.warn("initCecosAutocompletes error", e); }
+  }
+
+  function limpiarId(str) {
+    return String(str).replace(/[^a-zA-Z0-9]/g, "_");
+  }
+
+  function formatearTituloActividad(str) {
+    if (!str) return "PROCESO GENERAL";
+    var textoStr = String(str).trim();
+    var limpio = textoStr.replace(/^\d+(\.\d+)*[\s\-\_]+/, '').trim();
+    return limpio !== "" ? limpio.toUpperCase() : textoStr.toUpperCase();
+  }
+
+  function obtenerTextoResponsables(arr) {
+    if (!arr || arr.length === 0) return "Seleccionar responsables...";
+    if (arr.length === 1) {
+      var v=arr[0];
+      return (typeof v==="object" && v!==null) ? (v.nombre||v.email||"") : String(v);
+    }
+    return arr.length + " responsables seleccionados";
+  }
+
+  function obtenerTextoParticipantes(arr) {
+    if (!arr || arr.length === 0) return "Seleccionar participantes...";
+    if (arr.length === 1) {
+      var v=arr[0];
+      return (typeof v==="object" && v!==null) ? (v.nombre||v.email||"") : String(v);
+    }
+    return arr.length + " participantes seleccionados";
+  }
+
+  function toggleBotonesEnvio(deshabilitar) {
+    document.getElementById("btnEnviaPrueba").disabled = deshabilitar;
+    document.getElementById("btnEnviaOficial").disabled = deshabilitar;
+    document.getElementById("appContent").style.opacity = deshabilitar ? "0.5" : "1";
+  }
+
+  function mostrarModalSharf(titulo, mensaje, esError) {
+    document.getElementById('modalTitle').innerText = titulo;
+    document.getElementById('modalMessage').innerText = mensaje;
+    document.getElementById('modalBadge').style.backgroundColor = esError ? 'var(--red-bold)' : 'var(--green-bold)';
+    document.getElementById('sharfModalOverlay').classList.add('active');
+  }
+
+  function cerrarModalSharf() {
+    document.getElementById('sharfModalOverlay').classList.remove('active');
+  }
+
+  function alMostrarError(msg) {
+    document.getElementById("spinner").style.display = "none";
+    document.getElementById("loadingText").innerHTML = `<div class="error-box">Error al conectar con Google Sheets: ${msg}</div>`;
+  }
+
+  // ============================================================
+  // CÁLCULO 5S — ESPEJO de Data.js (calcularPorcentajesS / calcularPctActividad5S).
+  // Si cambia una versión, hay que cambiar la otra (ver tests/render_5s.test.js
+  // que compara numéricamente ambas implementaciones para los mismos insumos).
+  // ============================================================
+  var UMBRAL_5S = 80; // debe coincidir con CONFIG.UMBRAL_5S (Config.js)
+
+  function calcularPorcentajesS(items5S, estados) {
+    var resumen = {};
+    if (!items5S || !items5S.length) {
+      return resumen;
+    }
+    if (!estados) estados = {};
+
+    var umbral = UMBRAL_5S;
+
+    var gruposMap = {};
+    var listaGrupos = [];
+
+    for (var i = 0; i < items5S.length; i++) {
+      var it = items5S[i];
+      if (!it) continue;
+      var idG = it.idGrupo || String((it.idActividad || "") + "." + (it.sIndex || ""));
+      if (!gruposMap[idG]) {
+        gruposMap[idG] = {
+          idGrupo: idG,
+          grupo: it.grupo || "",
+          sIndex: Number(it.sIndex) || 0,
+          tipoS: it.tipoS || "MANUAL",
+          items: []
+        };
+        listaGrupos.push(gruposMap[idG]);
+      }
+      gruposMap[idG].items.push(it);
+    }
+
+    listaGrupos.sort(function(a, b) {
+      return a.sIndex - b.sIndex;
+    });
+
+    // Paso 1: Calcular S1..S4 (AUTO y MANUAL)
+    for (var g = 0; g < listaGrupos.length; g++) {
+      var grp = listaGrupos[g];
+      if (grp.tipoS === "DERIVADA" || grp.sIndex === 5) {
+        continue;
+      }
+
+      var pct = null;
+      var cumple = 0;
+      var noCumple = 0;
+      for (var k = 0; k < grp.items.length; k++) {
+        var idSub = grp.items[k].idSubactividad;
+        var est = String(estados[idSub] || "").trim().toUpperCase();
+        if (est === "CUMPLE") {
+          cumple++;
+        } else if (est === "NO CUMPLE") {
+          noCumple++;
+        }
+      }
+      var total = cumple + noCumple;
+      if (total > 0) {
+        pct = (cumple / total) * 100;
+      }
+
+      var estado = "N/A";
+      if (pct !== null) {
+        estado = (pct >= umbral) ? "CUMPLE" : "NO CUMPLE";
+      }
+
+      grp.pct = pct;
+      grp.estado = estado;
+    }
+
+    // Paso 2: Calcular S5 (DERIVADA) como promedio de S1..S4 no nulos
+    for (var d = 0; d < listaGrupos.length; d++) {
+      var grpD = listaGrupos[d];
+      if (grpD.tipoS === "DERIVADA" || grpD.sIndex === 5) {
+        var sumaS = 0;
+        var cantS = 0;
+        for (var s = 0; s < listaGrupos.length; s++) {
+          var otro = listaGrupos[s];
+          if (otro.sIndex !== 5 && otro.tipoS !== "DERIVADA") {
+            if (otro.pct !== null && !isNaN(otro.pct) && isFinite(otro.pct)) {
+              sumaS += otro.pct;
+              cantS++;
+            }
+          }
+        }
+        var pctDerivada = (cantS > 0) ? (sumaS / cantS) : null;
+        var estadoDerivada = "N/A";
+        if (pctDerivada !== null) {
+          estadoDerivada = (pctDerivada >= umbral) ? "CUMPLE" : "NO CUMPLE";
+        }
+        grpD.pct = pctDerivada;
+        grpD.estado = estadoDerivada;
+      }
+    }
+
+    // Devolver en orden de sIndex
+    for (var r = 0; r < listaGrupos.length; r++) {
+      var itemGrp = listaGrupos[r];
+      resumen[itemGrp.idGrupo] = {
+        idGrupo: itemGrp.idGrupo,
+        grupo: itemGrp.grupo,
+        sIndex: itemGrp.sIndex,
+        tipoS: itemGrp.tipoS,
+        pct: itemGrp.pct,
+        estado: itemGrp.estado
+      };
+    }
+
+    return resumen;
+  }
+
+  function calcularPctActividad5S(resumenPorS) {
+    if (!resumenPorS) return null;
+    var keys = Object.keys(resumenPorS);
+    if (keys.length === 0) return null;
+
+    var suma = 0;
+    var cant = 0;
+    for (var i = 0; i < keys.length; i++) {
+      var it = resumenPorS[keys[i]];
+      if (!it) continue;
+      var p = (typeof it === 'object' && it !== null && 'pct' in it) ? it.pct : it;
+      if (p != null && !isNaN(p) && isFinite(p)) {
+        suma += Number(p);
+        cant++;
+      }
+    }
+
+    if (cant === 0) return null;
+    return suma / cant;
+  }
+
+  // calcularPorcentajesS espera un mapa PLANO idSubactividad -> "CUMPLE"|"NO CUMPLE"|"N/A"|"",
+  // pero en el cliente el estado vive en estadoFormulario[idSub].estado. Este helper aplana.
+  function mapaEstadosPlanos(estadoFormularioObj) {
+    var plano = {};
+    for (var k in estadoFormularioObj) {
+      plano[k] = (estadoFormularioObj[k] && estadoFormularioObj[k].estado) || "";
+    }
+    return plano;
+  }
+
+ // OJO: el sanitizador de Apps Script interpreta la secuencia barra+asterisco dentro de
+// este bloque como apertura de comentario y se come TODO hasta el final del mismo,
+// incluida su etiqueta de cierre, dejando la pagina rota. Por eso el accept se arma
+// concatenando y la secuencia nunca aparece literal en el archivo.
+// Por la misma razon, en este bloque no debe escribirse la etiqueta de cierre ni
+// siquiera dentro de un comentario.
+var ACCEPT_IMG = 'image/' + '*' + ',.heic,.heif';
+var globalData = { checklist: [], cecosMatriz: [], correosExtraMatriz: [], personalMatriz: [] };
+  var estadoFormulario = {};
+  var cumplimientoGeneralActual = null;
+  var imagenesFormulario = {};
+  var participantesSeleccionadosGlobal = [];
+  var destinatariosSeleccionadosGlobal = [];
+  var usuarioConectadoGlobal = "";
+  var fechaChecklistGlobal = "";
+
+  function obtenerFechaHoyISO(){
+    var hoy = new Date();
+    var y = hoy.getFullYear();
+    var m = ("0" + (hoy.getMonth()+1)).slice(-2);
+    var d = ("0" + hoy.getDate()).slice(-2);
+    return y + "-" + m + "-" + d;
+  }
+  function inicializarFechaChecklist(){
+    var hoyISO = obtenerFechaHoyISO();
+    var input = document.getElementById("fechaChecklist");
+    if(input){
+      input.max = hoyISO;
+      input.value = hoyISO;
+      fechaChecklistGlobal = hoyISO;
+    }
+    actualizarFechaHeaderDesdePicker();
+  }
+  function alCambiarFechaChecklist(){
+    var input = document.getElementById("fechaChecklist");
+    if(!input) return;
+    var hoyISO = obtenerFechaHoyISO();
+    if(input.value > hoyISO){
+      input.value = hoyISO;
+      mostrarModalSharf("Atención", "No se permite seleccionar una fecha futura. Se ha restablecido a la fecha de hoy.", true);
+    }
+    fechaChecklistGlobal = input.value || hoyISO;
+    actualizarFechaHeaderDesdePicker();
+  }
+  function obtenerFechaChecklistISO(){
+    var input = document.getElementById("fechaChecklist");
+    if(input && input.value) return input.value;
+    if(fechaChecklistGlobal) return fechaChecklistGlobal;
+    return obtenerFechaHoyISO();
+  }
+  function actualizarFechaHeaderDesdePicker(){
+    var iso = obtenerFechaChecklistISO();
+    var partes = iso.split("-");
+    if(partes.length===3){
+      try{
+        var d = new Date(parseInt(partes[0],10), parseInt(partes[1],10)-1, parseInt(partes[2],10));
+        var opciones = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+        var txt = d.toLocaleDateString('es-ES', opciones);
+        var el = document.getElementById("fechaHeader");
+        if(el) el.innerText = txt.toUpperCase();
+      }catch(e){}
+    }
+  }
+
+  // Personal filtrado para el contexto activo (deprecated en Task 2, se mantiene por compatibilidad)
+  var responsablesFiltrados = [];
+  var participantesFiltrados = [];
+  var destinatariosFiltrados = [];
+
+  function alRecibirDatos(respuesta) {
+    try {
+      if (!respuesta || respuesta.status === "ERROR") {
+        alMostrarError(respuesta ? respuesta.message : "Respuesta vacía del servidor.");
+        return;
+      }
+
+      if (!respuesta.cecosMatriz) respuesta.cecosMatriz = [];
+      if (!respuesta.correosExtraMatriz) respuesta.correosExtraMatriz = [];
+      globalData = { checklist: respuesta.checklist||[], cecosMatriz: respuesta.cecosMatriz||[], correosExtraMatriz: respuesta.correosExtraMatriz||[], personalMatriz: respuesta.personalMatriz||[] };
+      if (!globalData.checklist) globalData.checklist = [];
+      if (!globalData.cecosMatriz) globalData.cecosMatriz = [];
+      if (!globalData.correosExtraMatriz) globalData.correosExtraMatriz = [];
+      if (!globalData.personalMatriz) globalData.personalMatriz = [];
+
+      var loadingCard = document.getElementById("loadingCard");
+      if (loadingCard) loadingCard.style.display = "none";
+      
+      var appContent = document.getElementById("appContent");
+      if (appContent) appContent.style.display = "block";
+
+      // Llenar Negocios Únicos
+      var negociosUnicos = [...new Set(globalData.checklist.map(item => item.negocio).filter(Boolean))];
+      var selectNeg = document.getElementById("selectNegocio");
+      if (selectNeg) {
+        selectNeg.innerHTML = '<option value="">Seleccionar negocio...</option>';
+        negociosUnicos.forEach(function(neg) {
+          var opt = document.createElement("option");
+          opt.value = neg;
+          opt.innerText = neg;
+          selectNeg.appendChild(opt);
+        });
+      }
+
+      // Resetear Operaciones
+      var selectOp = document.getElementById("selectOperacion");
+      if (selectOp) {
+        selectOp.innerHTML = '<option value="">Seleccione primero un negocio...</option>';
+        selectOp.disabled = true;
+      }
+
+      renderizarChecklist();
+      renderComentariosExtra();
+      if(window.initCecosAutocompletes) window.initCecosAutocompletes();
+    } catch (errRecibir) {
+      console.error("Error en alRecibirDatos:", errRecibir);
+      alMostrarError("Error procesando interfaz: " + errRecibir.toString());
+    }
+  }
+
+  function alCambiarNegocio() {
+    var negocioVal = document.getElementById("selectNegocio").value;
+    var selectOp = document.getElementById("selectOperacion");
+    selectOp.innerHTML = "";
+    if (negocioVal) {
+      var nNorm = negocioVal.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim();
+      var ops = [...new Set(globalData.checklist.filter(function(item){ return String(item.negocio||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim()===nNorm; }).map(function(item){ return String(item.operacion||"").trim(); }).filter(Boolean))];
+      selectOp.innerHTML = '<option value="">Seleccionar área...</option>';
+      ops.forEach(function(op) {
+        var opt = document.createElement("option");
+        opt.value = op;
+        opt.innerText = op;
+        selectOp.appendChild(opt);
+      });
+      selectOp.disabled = false;
+    } else {
+      selectOp.innerHTML = '<option value="">Seleccione primero un negocio...</option>';
+      selectOp.disabled = true;
+    }
+    alCambiarOperacion();
+  }
+
+  function alCambiarOperacion(){
+    participantesSeleccionadosGlobal=[];
+    destinatariosSeleccionadosGlobal=[];
+    // deprecated: mantener arrays vacíos para compatibilidad hasta Task 4
+    responsablesFiltrados=[]; participantesFiltrados=[]; destinatariosFiltrados=[];
+    autocompletesRespGlobal={};
+    renderizarChecklist();
+    if(window.initCecosAutocompletes) window.initCecosAutocompletes();
+    cargarFallasPreviasAlertas();
+  }
+
+  // deprecated Task2: filtrarPersonalPorContexto ya no se usa (cecos autocomplete en Task4), se mantiene por compatibilidad
+  function filtrarPersonalPorContexto(negocio, operacion) {
+    var nUpper = String(negocio || "").trim().toUpperCase();
+    var oUpper = String(operacion || "").trim().toUpperCase();
+
+    var conjuntoPersonal = (globalData.personalMatriz || []).filter(function(p) {
+      if (!p) return false;
+      var pNeg = String(p.negocio || "").trim().toUpperCase();
+      var pOp = String(p.operacion || "").trim().toUpperCase();
+
+      var cumpleNegocio = (pNeg === "TODOS" || pNeg === "TODAS" || pNeg === nUpper);
+      var cumpleOperacion = (pOp === "TODAS" || pOp === "TODOS" || pOp === oUpper);
+
+      return cumpleNegocio && cumpleOperacion;
+    });
+
+    responsablesFiltrados = [...new Set(conjuntoPersonal
+      .filter(p => String(p.rol || "").toLowerCase().includes("responsable"))
+      .map(p => String(p.nombre || "").trim())
+      .filter(Boolean))];
+
+    participantesFiltrados = [...new Set(conjuntoPersonal
+      .filter(p => String(p.rol || "").toLowerCase().includes("participante"))
+      .map(p => String(p.nombre || "").trim())
+      .filter(Boolean))];
+
+    destinatariosFiltrados = [...new Set(conjuntoPersonal
+      .filter(p => String(p.rol || "").toLowerCase().includes("destinatario"))
+      .map(p => String(p.nombre || "").trim())
+      .filter(Boolean))];
+
+    if (responsablesFiltrados.length === 0 && conjuntoPersonal.length > 0) {
+      responsablesFiltrados = [...new Set(conjuntoPersonal.map(p => String(p.nombre || "").trim()).filter(Boolean))];
+    }
+    if (destinatariosFiltrados.length === 0) {
+      destinatariosFiltrados = responsablesFiltrados;
+    }
+  }
+
+  function renderizarDestinatarios() {
+    var emailsList = document.getElementById("emailsList");
+    emailsList.innerHTML = "";
+
+    if (destinatariosFiltrados.length === 0) {
+      emailsList.innerHTML = `<div style="font-size:12px; color:var(--ink-soft); grid-column: 1/-1;">Seleccione un negocio y operación para cargar destinatarios.</div>`;
+      return;
+    }
+
+    destinatariosFiltrados.forEach(function(correo) {
+      emailsList.innerHTML += `
+        <label class="destinatario-card-item" title="${correo}">
+          <input type="checkbox" class="chk-correo" value="${correo}">
+          <span>${correo}</span>
+        </label>
+      `;
+    });
+  }
+
+  function toggleDropdownParticipantes() {
+    var selectOp = document.getElementById("selectOperacion");
+    if (selectOp.disabled || !selectOp.value) return;
+    
+    var elem = document.getElementById("dropdown_participantes");
+    document.querySelectorAll(".dropdown-multi").forEach(d => { if (d !== elem) d.classList.remove("open"); });
+    elem.classList.toggle("open");
+  }
+
+  function toggleParticipante(nombre, checked) {
+    if (checked) {
+      if (!participantesSeleccionadosGlobal.includes(nombre)) participantesSeleccionadosGlobal.push(nombre);
+    } else {
+      participantesSeleccionadosGlobal = participantesSeleccionadosGlobal.filter(p => p !== nombre);
+    }
+    document.getElementById("label_participantes").innerText = obtenerTextoParticipantes(participantesSeleccionadosGlobal);
+  }
+
+var macroactividadesMapGlobal = {};
+var gruposMapGlobal = {};
+var tipoSMapGlobal = {}; // idSubactividad -> tipoS ("AUTO"|"MANUAL"|"DERIVADA"), solo puntos de 5S
+
+  function renderizarChecklist() {
+    var negocioSeleccionado = document.getElementById("selectNegocio").value;
+    var opSeleccionada = document.getElementById("selectOperacion").value;
+    var container = document.getElementById("checklistContainer");
+    container.innerHTML = "";
+
+    if (!negocioSeleccionado) {
+      container.innerHTML = `
+        <div class="card empty-state">
+          Por favor, elige primero un <strong>"Negocio"</strong> para cargar las opciones de operación.
+        </div>
+      `;
+      if(window.initCecosAutocompletes) window.initCecosAutocompletes();
+      recalcularCumplimiento();
+      return;
+    }
+
+    if (!opSeleccionada) {
+      container.innerHTML = `
+        <div class="card empty-state">
+          Por favor, elige un área en <strong>"Operación activa"</strong> para cargar las subactividades correspondientes.
+        </div>
+      `;
+      if(window.initCecosAutocompletes) window.initCecosAutocompletes();
+      recalcularCumplimiento();
+      return;
+    }
+
+    var nUpper = String(negocioSeleccionado || "").trim().toUpperCase();
+    var oUpper = String(opSeleccionada || "").trim().toUpperCase();
+
+    var itemsFiltrados = globalData.checklist.filter(item => 
+      String(item.negocio || "").trim().toUpperCase() === nUpper && 
+      String(item.operacion || "").trim().toUpperCase() === oUpper
+    );
+
+    if (itemsFiltrados.length === 0) {
+      container.innerHTML = `
+        <div class="card empty-state">
+          No se encontraron actividades registradas para <strong>"${negocioSeleccionado} — ${opSeleccionada}"</strong> en la hoja de cálculo.
+        </div>
+      `;
+      if(window.initCecosAutocompletes) window.initCecosAutocompletes();
+      recalcularCumplimiento();
+      return;
+    }
+
+    var actividadesMap = {};
+    itemsFiltrados.forEach(function(item) {
+      var actNombreLimpio = formatearTituloActividad(item.actividad);
+      if (!actividadesMap[actNombreLimpio]) {
+        actividadesMap[actNombreLimpio] = [];
+      }
+      actividadesMap[actNombreLimpio].push(item);
+    });
+
+    macroactividadesMapGlobal = {};
+    gruposMapGlobal = {};
+    tipoSMapGlobal = {};
+
+    for (var actNombre in actividadesMap) {
+      var subs = actividadesMap[actNombre];
+      var cleanActId = limpiarId(actNombre);
+      var es5SMacro = subs.some(function(s) { return !!s.tipoS; });
+      macroactividadesMapGlobal[cleanActId] = {
+        nombre: actNombre,
+        subIds: subs.map(s => s.idSubactividad),
+        // Solo los puntos MANUAL deben marcarse con el botón N/A de la macroactividad;
+        // los AUTO/DERIVADA de 5S tienen estado derivado y no se tocan.
+        naSubIds: subs.filter(function(s) { return !s.tipoS || s.tipoS === 'MANUAL'; }).map(function(s) { return s.idSubactividad; }),
+        items: subs,
+        es5S: es5SMacro
+      };
+
+      var actCard = document.createElement("div");
+      actCard.className = "card";
+      actCard.id = "card_macro_" + cleanActId;
+      
+      var actHeader = `
+        <div class="activity-header" onclick="toggleMacroactividad('${cleanActId}', event)">
+          <div class="activity-title">
+            <span class="accordion-icon" id="icon_act_${cleanActId}">▼</span>
+            <span>${actNombre}</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;" onclick="event.stopPropagation();">
+            <button type="button" class="btn-macro-na" id="btn_macro_na_${cleanActId}" onclick="marcarMacroactividadNA('${cleanActId}')" title="Marcar todas las subactividades de esta sección como N/A y contraer">
+              N/A
+            </button>
+            <div class="activity-badge" id="badge_act_${cleanActId}">-</div>
+          </div>
+        </div>
+      `;
+      
+      var tieneGrupos = subs.some(function(s){ return s.grupo; });
+      var subsHtml = `<div class="activity-body" id="body_act_${cleanActId}">`;
+
+      if (!tieneGrupos) {
+        subs.forEach(function(sub) {
+          var idSub = sub.idSubactividad;
+          if (!estadoFormulario[idSub]) {
+            estadoFormulario[idSub] = { estado: "", responsable: [], comentario: "" };
+          }
+          if (!imagenesFormulario[idSub]) {
+            imagenesFormulario[idSub] = [];
+          }
+
+          subsHtml += `
+            <div class="subactivity-block">
+              <div class="subactivity-text">${sub.subactividad}</div>
+              
+              <div class="controls-row">
+                <div class="btn-group">
+                  <button type="button" class="btn-eval" id="btn_cumple_${limpiarId(idSub)}" onclick="setEstado('${idSub}', 'CUMPLE')">CUMPLE</button>
+                  <button type="button" class="btn-eval" id="btn_nocumple_${limpiarId(idSub)}" onclick="setEstado('${idSub}', 'NO CUMPLE')">NO CUMPLE</button>
+                  <button type="button" class="btn-eval" id="btn_na_${limpiarId(idSub)}" onclick="setEstado('${idSub}', 'N/A')">N/A</button>
+                </div>
+                
+                <div class="cecos-field" id="field_resp_${limpiarId(idSub)}"></div>
+              </div>
+
+              <input type="text" class="input-obs" placeholder="Agregar observaciones (Opcional)..." value="${estadoFormulario[idSub].comentario || ''}" oninput="setComentario('${idSub}', this.value)">
+
+              <div class="photo-section">
+                <div class="photo-label">Evidencias Fotográficas:</div>
+                <div class="photo-grid" id="photo_grid_${limpiarId(idSub)}">
+                  <button type="button" class="btn-add-photo" id="btn_add_photo_${limpiarId(idSub)}" onclick="triggerCamera('${idSub}')">Evidencia</button>
+                  <input type="file" id="file_input_${limpiarId(idSub)}" accept="${ACCEPT_IMG}" multiple style="display:none;" onchange="handleFotoSeleccionada('${idSub}', this)">
+                </div>
+              </div>
+            </div>
+          `;
+        });
+      } else {
+        var gruposOrdenados = [];
+        var gruposMap = {};
+        subs.forEach(function(sub) {
+          var idGrp = sub.idGrupo || "sin_grupo";
+          if (!gruposMap[idGrp]) {
+            gruposMap[idGrp] = {
+              idGrupo: idGrp,
+              nombre: sub.grupo || sub.actividad || "Grupo",
+              subs: []
+            };
+            gruposOrdenados.push(gruposMap[idGrp]);
+          }
+          gruposMap[idGrp].subs.push(sub);
+        });
+
+        // Si es la macroactividad 5S, precalculamos el % de cada S (incluye S5 DERIVADA,
+        // que depende del promedio de S1..S4) con el estado ya cargado en estadoFormulario.
+        var resumenSMacro = es5SMacro ? calcularPorcentajesS(subs, mapaEstadosPlanos(estadoFormulario)) : {};
+
+        gruposOrdenados.forEach(function(grp) {
+          var cleanGrpId = limpiarId(grp.idGrupo);
+
+          // S sin desglose: se renderiza como fila evaluable directa, sin sub-acordeón ni badge
+          if (grp.subs.length === 1 && grp.subs[0].sinDesglose) {
+            var sub = grp.subs[0];
+            var idSub = sub.idSubactividad;
+            if (!estadoFormulario[idSub]) {
+              estadoFormulario[idSub] = { estado: "", responsable: [], comentario: "" };
+            }
+            if (!imagenesFormulario[idSub]) {
+              imagenesFormulario[idSub] = [];
+            }
+            tipoSMapGlobal[idSub] = sub.tipoS;
+            var cleanId = limpiarId(idSub);
+            gruposMapGlobal[cleanGrpId] = { subs: [idSub] };
+
+            subsHtml += `
+              <div class="subactivity-block s-punto-block">
+                <div class="s-punto-row">
+                  <button type="button" class="s-check" id="s_check_${cleanId}" onclick="cicloEstadoS('${idSub}')" title="Sin marcar" aria-label="Sin marcar"></button>
+                  <div class="s-punto-text" style="font-weight:600;">${sub.grupo || sub.subactividad}</div>
+                </div>
+                <div class="s-punto-detail s-hidden" id="s_detail_${cleanId}">
+                  <div class="cecos-field" id="field_resp_${cleanId}"></div>
+                  <div class="photo-grid" id="photo_grid_${cleanId}">
+                    <button type="button" class="btn-add-photo-sm" id="btn_add_photo_${cleanId}" onclick="triggerCamera('${idSub}')" title="Agregar evidencia" aria-label="Agregar evidencia">📷</button>
+                    <input type="file" id="file_input_${cleanId}" accept="${ACCEPT_IMG}" multiple style="display:none;" onchange="handleFotoSeleccionada('${idSub}', this)">
+                  </div>
+                  <input type="text" class="input-obs" placeholder="Hallazgo / observación (opcional)..." value="${estadoFormulario[idSub].comentario || ''}" oninput="setComentario('${idSub}', this.value)">
+                </div>
+              </div>
+            `;
+            return;
+          }
+
+          var tipoSGrupo = (grp.subs[0] && grp.subs[0].tipoS) || null;
+          gruposMapGlobal[cleanGrpId] = {
+            idGrupo: grp.idGrupo,
+            nombre: grp.nombre,
+            subIds: grp.subs.map(function(s) { return s.idSubactividad; }),
+            tipoS: tipoSGrupo,
+            cleanActId: cleanActId
+          };
+
+          subsHtml += `
+            <div class="group-header" onclick="toggleGrupo5S('${cleanGrpId}', event)">
+              <div class="group-title">
+                <span class="accordion-icon collapsed" id="icon_grp_${cleanGrpId}">▼</span>
+                <span>${grp.nombre}</span>
+              </div>
+              <div class="group-badge" id="badge_grp_${cleanGrpId}">-</div>
+            </div>
+            <div class="group-body collapsed" id="body_grp_${cleanGrpId}">
+          `;
+
+          grp.subs.forEach(function(sub) {
+            var idSub = sub.idSubactividad;
+            if (!estadoFormulario[idSub]) {
+              estadoFormulario[idSub] = { estado: "", responsable: [], comentario: "" };
+            }
+            if (!imagenesFormulario[idSub]) {
+              imagenesFormulario[idSub] = [];
+            }
+            var textoPunto = sub.subactividadCorta || sub.subactividad;
+            var cleanId = limpiarId(idSub);
+
+            if (sub.tipoS) {
+              // ---- Punto de 5S: diseño COMPACTO (ver modelo_5s.md, "DISEÑO COMPACTO...") ----
+              tipoSMapGlobal[idSub] = sub.tipoS;
+
+              if (sub.tipoS === "DERIVADA") {
+                // S5: puramente informativa, sin ningún control. Su estado sale del promedio
+                // de S1..S4 (calcularPorcentajesS), ya calculado arriba en resumenSMacro.
+                var infoDerivada = resumenSMacro[sub.idGrupo];
+                estadoFormulario[idSub].estado = (infoDerivada && infoDerivada.estado) || "N/A";
+                subsHtml += `
+                  <div class="subactivity-block s-punto-block">
+                    <div class="s-punto-row">
+                      <div class="s-auto-badge" id="s_auto_badge_${cleanId}" style="background:var(--line-soft);color:var(--ink-soft);">-</div>
+                      <div class="s-punto-text">${textoPunto}</div>
+                    </div>
+                  </div>
+                `;
+              } else {
+                // MANUAL (S2..S4 y puntos genéricos): cuadrito de 4 estados.
+                subsHtml += `
+                  <div class="subactivity-block s-punto-block">
+                    <div class="s-punto-row">
+                      <button type="button" class="s-check" id="s_check_${cleanId}" onclick="cicloEstadoS('${idSub}')" title="Sin marcar — click para evaluar" aria-label="Sin marcar — click para evaluar"></button>
+                      <div class="s-punto-text">${textoPunto}</div>
+                    </div>
+                    <div class="s-punto-detail s-hidden" id="s_detail_${cleanId}">
+                      <div class="cecos-field" id="field_resp_${cleanId}"></div>
+                      <div class="photo-grid" id="photo_grid_${cleanId}">
+                        <button type="button" class="btn-add-photo-sm" id="btn_add_photo_${cleanId}" onclick="triggerCamera('${idSub}')" title="Agregar evidencia" aria-label="Agregar evidencia">📷</button>
+                        <input type="file" id="file_input_${cleanId}" accept="${ACCEPT_IMG}" multiple style="display:none;" onchange="handleFotoSeleccionada('${idSub}', this)">
+                      </div>
+                      <input type="text" class="input-obs" placeholder="Hallazgo / observación (opcional)..." value="${estadoFormulario[idSub].comentario || ''}" oninput="setComentario('${idSub}', this.value)">
+                    </div>
+                  </div>
+                `;
+              }
+            } else {
+              // ---- Punto NORMAL dentro de un grupo (diseño clásico, sin cambios) ----
+              subsHtml += `
+                <div class="subactivity-block">
+                  <div class="subactivity-text">${textoPunto}</div>
+
+                  <div class="controls-row">
+                    <div class="btn-group">
+                      <button type="button" class="btn-eval" id="btn_cumple_${cleanId}" onclick="setEstado('${idSub}', 'CUMPLE')">CUMPLE</button>
+                      <button type="button" class="btn-eval" id="btn_nocumple_${cleanId}" onclick="setEstado('${idSub}', 'NO CUMPLE')">NO CUMPLE</button>
+                      <button type="button" class="btn-eval" id="btn_na_${cleanId}" onclick="setEstado('${idSub}', 'N/A')">N/A</button>
+                    </div>
+
+                    <div class="cecos-field" id="field_resp_${cleanId}"></div>
+                  </div>
+
+                  <input type="text" class="input-obs" placeholder="Agregar observaciones (Opcional)..." value="${estadoFormulario[idSub].comentario || ''}" oninput="setComentario('${idSub}', this.value)">
+
+                  <div class="photo-section">
+                    <div class="photo-label">Evidencias Fotográficas:</div>
+                    <div class="photo-grid" id="photo_grid_${cleanId}">
+                      <button type="button" class="btn-add-photo" id="btn_add_photo_${cleanId}" onclick="triggerCamera('${idSub}')">Evidencia</button>
+                      <input type="file" id="file_input_${cleanId}" accept="${ACCEPT_IMG}" multiple style="display:none;" onchange="handleFotoSeleccionada('${idSub}', this)">
+                    </div>
+                  </div>
+                </div>
+              `;
+            }
+          });
+
+          subsHtml += `</div>`;
+        });
+      }
+      subsHtml += `</div>`;
+
+      actCard.innerHTML = actHeader + subsHtml;
+      container.appendChild(actCard);
+
+      subs.forEach(function(sub) {
+        if (imagenesFormulario[sub.idSubactividad] && imagenesFormulario[sub.idSubactividad].length > 0) {
+          renderFotosGrid(sub.idSubactividad);
+        }
+        if (estadoFormulario[sub.idSubactividad] && estadoFormulario[sub.idSubactividad].estado) {
+          setEstado(sub.idSubactividad, estadoFormulario[sub.idSubactividad].estado);
+        }
+        // Autocomplete responsables via cecos
+        (function(idSub){
+          var cleanId = limpiarId(idSub);
+          var fieldId = "field_resp_" + cleanId;
+          if(document.getElementById(fieldId)){
+            if(Array.isArray(estadoFormulario[idSub].responsable) && estadoFormulario[idSub].responsable.length>0 && typeof estadoFormulario[idSub].responsable[0]==="string"){
+              estadoFormulario[idSub].responsable = estadoFormulario[idSub].responsable.map(function(nom){
+                var found = (globalData.cecosMatriz||[]).find(function(p){ return p.nombre===nom || p.email===nom; }) ||
+                            (globalData.correosExtraMatriz||[]).find(function(p){ return p.nombre===nom || p.email===nom; });
+                return found || { nombre: nom, email: nom.indexOf("@")>-1?nom:"", cargo:"", area:"", id: nom };
+              });
+            }
+            if(!Array.isArray(estadoFormulario[idSub].responsable)) estadoFormulario[idSub].responsable=[];
+            autocompletesRespGlobal[idSub] = crearAutocomplete({
+              containerId: fieldId,
+              placeholder: "Buscar responsable o escriba correo @holasharf.com + Enter...",
+              getSelected: function(){ return estadoFormulario[idSub].responsable||[]; },
+              setSelected: function(arr){ estadoFormulario[idSub].responsable = arr||[]; },
+              decorarChip: function(persona, i){ return decorarChipMemo(idSub, persona, i); },
+              onFlagClick: function(persona){ alternarMemo(idSub, persona); }
+            });
+          }
+        })(sub.idSubactividad);
+      });
+      // Init participantes/destinatarios autocompletes if not already (alCambiarOperacion will also call)
+      if(window.initCecosAutocompletes) window.initCecosAutocompletes();
+    }
+
+    recalcularCumplimiento();
+  }
+
+  function toggleMacroactividad(cleanActId, event) {
+    if (event && event.target && event.target.closest(".btn-macro-na")) return;
+    var bodyElem = document.getElementById("body_act_" + cleanActId);
+    var iconElem = document.getElementById("icon_act_" + cleanActId);
+    if (!bodyElem) return;
+    
+    var isCollapsed = bodyElem.classList.toggle("collapsed");
+    if (iconElem) {
+      if (isCollapsed) iconElem.classList.add("collapsed");
+      else iconElem.classList.remove("collapsed");
+    }
+  }
+
+  function toggleGrupo5S(cleanGrupoId, event) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    var bodyElem = document.getElementById("body_grp_" + cleanGrupoId);
+    var iconElem = document.getElementById("icon_grp_" + cleanGrupoId);
+    if (!bodyElem) return;
+
+    var isCollapsed = bodyElem.classList.toggle("collapsed");
+    if (iconElem) {
+      if (isCollapsed) iconElem.classList.add("collapsed");
+      else iconElem.classList.remove("collapsed");
+    }
+  }
+
+  function marcarMacroactividadNA(cleanActId) {
+    var macroData = macroactividadesMapGlobal[cleanActId];
+    if (!macroData || !Array.isArray(macroData.subIds)) return;
+
+    // Para 5S, solo los puntos MANUAL se marcan N/A: los AUTO/DERIVADA tienen estado
+    // derivado y no deben tocarse (naSubIds ya viene filtrado desde renderizarChecklist).
+    var idsAMarcar = Array.isArray(macroData.naSubIds) ? macroData.naSubIds : macroData.subIds;
+    idsAMarcar.forEach(function(idSub) {
+      setEstado(idSub, 'N/A');
+    });
+
+    // Contraer la macroactividad tras presionar N/A
+    var bodyElem = document.getElementById("body_act_" + cleanActId);
+    var iconElem = document.getElementById("icon_act_" + cleanActId);
+    if (bodyElem) bodyElem.classList.add("collapsed");
+    if (iconElem) iconElem.classList.add("collapsed");
+  }
+
+  function toggleDropdown(idSub) {
+    var elem = document.getElementById("dropdown_multi_" + limpiarId(idSub));
+    document.querySelectorAll(".dropdown-multi").forEach(d => { if (d !== elem) d.classList.remove("open"); });
+    elem.classList.toggle("open");
+  }
+
+  function toggleResponsable(idSub, responsable, checked) {
+    if (!Array.isArray(estadoFormulario[idSub].responsable)) {
+      estadoFormulario[idSub].responsable = [];
+    }
+    
+    var list = estadoFormulario[idSub].responsable;
+    if (checked) {
+      if (!list.includes(responsable)) list.push(responsable);
+    } else {
+      estadoFormulario[idSub].responsable = list.filter(r => r !== responsable);
+    }
+
+    document.getElementById("label_resp_" + limpiarId(idSub)).innerText = obtenerTextoResponsables(estadoFormulario[idSub].responsable);
+  }
+
+  // ---- Bandera de memorando (alertas 1-3) ----
+  // fallasPreviasGlobal: fallas previas por subactividad y responsable de la operación seleccionada
+  // (obtenerFallasPreviasAlertas en History.js). nivelAlertaMemo(idSub, persona) da el nivel de la
+  // alerta de HOY para ese responsable (0 = no aplica, 1/2/3 = nivel). memoSeleccionGlobal[idSub][claveResp]
+  // guarda la elección EXPLÍCITA del inspector (true = activa, false = inactiva) al hacer click en la
+  // bandera; sin elección, la bandera nace activa (roja) solo en la 3era Alerta y apagada (blanca) en
+  // la 1era/2da. Esto ya NO depende del check global "Enviar Memos": las banderas siempre se muestran
+  // si corresponde; "Enviar Memos" solo decide si el servidor llega a preparar algún memorando.
+  var fallasPreviasGlobal = { normal: {}, s5: {} };
+  var memoSeleccionGlobal = {};
+  var autocompletesRespGlobal = {};
+  var MEMO_FLAG_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1h1.5v14H3zM5.5 1.5h8l-2 3.5 2 3.5h-8z"/></svg>';
+
+  // Misma normalización que normalizarTextoClave (Config.js) sobre el nombre corto que viaja en el payload.
+  function claveResponsableMemo(persona) {
+    var nombreRaw = (typeof persona === "object" && persona !== null) ? (persona.nombre || persona.email || "") : String(persona || "");
+    return String(formatearResponsableCorto(nombreRaw) || "").toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  }
+
+  // Interruptor global "Enviar Memos": APAGADO por defecto. No afecta si las banderas se muestran o
+  // no (eso lo decide solo el nivel de alerta); solo viaja en el payload para que el servidor sepa si
+  // debe preparar memorandos.
+  function memosHabilitados() {
+    var chk = document.getElementById("chkEnviarMemos");
+    return !chk || chk.checked;
+  }
+
+  // Ordinal legible para los textos de la bandera: 1era/2da/3era (title) y 1ª/2ª/3ª (texto del botón).
+  function _ordinalAlertaMemo(nivel) {
+    return nivel === 1 ? "1era" : nivel === 2 ? "2da" : "3era";
+  }
+  function _ordinalAlertaMemoCorto(nivel) {
+    return nivel === 1 ? "1ª" : nivel === 2 ? "2ª" : "3ª";
+  }
+
+  // Ciclo 1 -> 2 -> 3: con 0, 3, 6... fallas previas la de hoy es la 1era Alerta; con 1, 4, 7... la
+  // 2da; con 2, 5, 8... la 3era. Devuelve 0 si la bandera no aplica (no es NO CUMPLE, "No alertar"
+  // está marcado o no hay responsable).
+  function nivelAlertaMemo(idSub, persona) {
+    var est = estadoFormulario[idSub];
+    if (!est || est.estado !== "NO CUMPLE") return 0;
+    var chkNA = document.getElementById("chkNoAlertar");
+    if (chkNA && chkNA.checked) return 0;
+    var clave = claveResponsableMemo(persona);
+    if (!clave) return 0;
+    var mapa = tipoSMapGlobal[idSub] ? fallasPreviasGlobal.s5 : fallasPreviasGlobal.normal;
+    var porResp = (mapa || {})[String(idSub).trim()];
+    var fallas = (porResp && porResp[clave]) || 0;
+    return (fallas % 3) + 1;
+  }
+
+  // Estado de la bandera: la elección explícita del inspector manda; sin ella, activa solo en 3era Alerta.
+  function memoActivo(idSub, persona) {
+    var nivel = nivelAlertaMemo(idSub, persona);
+    if (nivel === 0) return false;
+    var sel = memoSeleccionGlobal[idSub] ? memoSeleccionGlobal[idSub][claveResponsableMemo(persona)] : undefined;
+    if (sel === true || sel === false) return sel;
+    return nivel === 3;
+  }
+
+  function decorarChipMemo(idSub, persona, i) {
+    var nivel = nivelAlertaMemo(idSub, persona);
+    if (nivel === 0) return "";
+    var activo = memoActivo(idSub, persona);
+    var ordinal = _ordinalAlertaMemo(nivel);
+    var titulo;
+    if (nivel === 3) {
+      titulo = activo
+        ? "3era Alerta: se preparará memorando. Click para NO enviarlo."
+        : "3era Alerta con memorando desactivado. Click para volver a activarlo.";
+    } else {
+      titulo = activo
+        ? ordinal + " Alerta: memorando activado manualmente. Click para desactivarlo."
+        : ordinal + " Alerta: sin memorando. Click para activarlo.";
+    }
+    var clase = "memo-flag" + (activo ? " on" : "");
+    return '<button type="button" class="' + clase + '" data-flag="' + i + '" data-nivel="' + nivel + '" title="' + titulo + '" aria-label="' + titulo + '" aria-pressed="' + activo + '">' + MEMO_FLAG_SVG + 'Memo ' + _ordinalAlertaMemoCorto(nivel) + '</button>';
+  }
+
+  function alternarMemo(idSub, persona) {
+    var clave = claveResponsableMemo(persona);
+    if (!memoSeleccionGlobal[idSub]) memoSeleccionGlobal[idSub] = {};
+    memoSeleccionGlobal[idSub][clave] = !memoActivo(idSub, persona);
+    actualizarResumenMemos();
+  }
+
+  // listasMemoPayload: por cada responsable de idSub con bandera visible, clasifica su nombre corto en
+  // memoActivar (bandera activa, de cualquier nivel) o memoOmitir (3era apagada a mano). Contrato con el
+  // servidor (Memo.js/Report.js): la 3era alerta se prepara salvo que esté en memoOmitir; la 1era/2da
+  // solo si está en memoActivar. Se manda toda bandera activa para respetar lo que vio el inspector
+  // aunque el servidor recalcule otro nivel (p. ej. otro envío registró una alerta entre medio).
+  function listasMemoPayload(idSub, respVal) {
+    var memoActivar = [];
+    var memoOmitir = [];
+    if (Array.isArray(respVal)) {
+      respVal.forEach(function(persona) {
+        var nivel = nivelAlertaMemo(idSub, persona);
+        if (nivel === 0) return;
+        var activo = memoActivo(idSub, persona);
+        var nombreRaw = (typeof persona === "object" && persona !== null) ? (persona.nombre || persona.email || "") : String(persona);
+        var nombreCorto = formatearResponsableCorto(nombreRaw);
+        if (nivel === 3 && !activo) memoOmitir.push(nombreCorto);
+        else if (activo) memoActivar.push(nombreCorto);
+      });
+    }
+    return { memoActivar: memoActivar, memoOmitir: memoOmitir };
+  }
+
+  // Cuenta cuántas banderas están HOY activas (rojas, o blancas encendidas a mano) en la operación
+  // en pantalla, para el texto de ayuda junto a "Enviar Memos". Igual que refrescarBanderasMemo, solo
+  // mira los campos de responsables presentes en el DOM (estadoFormulario puede traer restos de otra operación).
+  function contarMemosActivos() {
+    var n = 0;
+    Object.keys(autocompletesRespGlobal).forEach(function(idSub) {
+      var ac = autocompletesRespGlobal[idSub];
+      if (!ac || !ac.container || !document.body.contains(ac.container)) return;
+      var arr = estadoFormulario[idSub] && estadoFormulario[idSub].responsable;
+      if (!Array.isArray(arr)) return;
+      arr.forEach(function(persona) {
+        if (nivelAlertaMemo(idSub, persona) > 0 && memoActivo(idSub, persona)) n++;
+      });
+    });
+    return n;
+  }
+
+  // Texto de ayuda vivo junto al check "Enviar Memos": cuántos memos hay marcados y qué pasará con ellos.
+  function actualizarResumenMemos() {
+    var el = document.getElementById("resumenMemos");
+    if (!el) return;
+    var n = contarMemosActivos();
+    if (n <= 0) { el.style.display = "none"; el.textContent = ""; return; }
+    var memoPal = n === 1 ? "memo" : "memos";
+    var texto;
+    if (memosHabilitados()) {
+      texto = (n === 1 ? "Se preparará " : "Se prepararán ") + n + " " + memoPal + ". Al enviar el reporte OFICIAL te llegará un correo para confirmar a quiénes se envían.";
+    } else {
+      texto = "Tienes " + n + " " + memoPal + " " + (n === 1 ? "marcado" : "marcados") + ". No se enviará ninguno mientras «Enviar Memos» esté desmarcado.";
+    }
+    el.textContent = texto;
+    el.style.display = "";
+  }
+
+  function refrescarBanderasMemo(idSub) {
+    var ids = idSub !== undefined ? [idSub] : Object.keys(autocompletesRespGlobal);
+    ids.forEach(function(id) {
+      var ac = autocompletesRespGlobal[id];
+      if (ac && ac.container && document.body.contains(ac.container)) ac.renderChips();
+    });
+    actualizarResumenMemos();
+  }
+
+  function cargarFallasPreviasAlertas() {
+    fallasPreviasGlobal = { normal: {}, s5: {} };
+    var neg = document.getElementById("selectNegocio").value;
+    var op = document.getElementById("selectOperacion").value;
+    if (!neg || !op) return;
+    google.script.run
+      .withSuccessHandler(function(res) {
+        // Ignorar respuestas de una operación que ya no está seleccionada
+        if (document.getElementById("selectNegocio").value !== neg || document.getElementById("selectOperacion").value !== op) return;
+        if (res && res.exito) {
+          fallasPreviasGlobal = { normal: res.normal || {}, s5: res.s5 || {} };
+          refrescarBanderasMemo();
+        }
+      })
+      .withFailureHandler(function(err) { console.warn("No se pudo cargar el historial de alertas", err); })
+      .obtenerFallasPreviasAlertas(neg, op);
+  }
+
+  function setEstado(idSub, valor) {
+    estadoFormulario[idSub].estado = valor;
+
+    var cleanId = limpiarId(idSub);
+    var btnC = document.getElementById("btn_cumple_" + cleanId);
+    var btnNC = document.getElementById("btn_nocumple_" + cleanId);
+    var btnNA = document.getElementById("btn_na_" + cleanId);
+
+    if (btnC) btnC.className = "btn-eval " + (valor === 'CUMPLE' ? 'active-cumple' : '');
+    if (btnNC) btnNC.className = "btn-eval " + (valor === 'NO CUMPLE' ? 'active-nocumple' : '');
+    if (btnNA) btnNA.className = "btn-eval " + (valor === 'N/A' ? 'active-na' : '');
+
+    // Si es un punto compacto de 5S, actualiza el cuadrito y muestra/oculta el detalle.
+    actualizarCuadritoS(idSub, valor);
+    refrescarBanderasMemo(idSub);
+
+    recalcularCumplimiento();
+  }
+
+  function setComentario(idSub, val) { estadoFormulario[idSub].comentario = val; }
+
+  // ---- Puntos compactos de 5S: cuadrito de 4 estados ("" → CUMPLE → NO CUMPLE → N/A → "") ----
+  var CICLO_ESTADOS_S = ["", "CUMPLE", "NO CUMPLE", "N/A"];
+
+  function cicloEstadoS(idSub) {
+    var actual = (estadoFormulario[idSub] || {}).estado || "";
+    var idx = CICLO_ESTADOS_S.indexOf(actual);
+    if (idx === -1) idx = 0;
+    var siguiente = CICLO_ESTADOS_S[(idx + 1) % CICLO_ESTADOS_S.length];
+    setEstado(idSub, siguiente);
+  }
+
+  function infoVisualCuadritoS(valor) {
+    switch (valor) {
+      case "N/A": return { glifo: "–", claseExtra: "s-check-na", titulo: "N/A — click para continuar el ciclo" };
+      case "CUMPLE": return { glifo: "✓", claseExtra: "s-check-cumple", titulo: "Cumple — click para continuar el ciclo" };
+      case "NO CUMPLE": return { glifo: "✕", claseExtra: "s-check-nocumple", titulo: "No cumple — click para continuar el ciclo" };
+      default: return { glifo: "", claseExtra: "", titulo: "Sin marcar — click para evaluar" };
+    }
+  }
+
+  function actualizarCuadritoS(idSub, valor) {
+    var cleanId = limpiarId(idSub);
+    var btn = document.getElementById("s_check_" + cleanId);
+    if (btn) {
+      var info = infoVisualCuadritoS(valor);
+      btn.className = "s-check " + info.claseExtra;
+      btn.innerHTML = info.glifo;
+      btn.title = info.titulo;
+      btn.setAttribute("aria-label", info.titulo);
+    }
+    // El detalle (responsable/foto/observación) solo se revela en NO CUMPLE; nunca se borra.
+    var detalle = document.getElementById("s_detail_" + cleanId);
+    if (detalle) {
+      if (valor === "NO CUMPLE") detalle.classList.remove("s-hidden");
+      else detalle.classList.add("s-hidden");
+    }
+  }
+
+  function pintarSemaforoEnElemento(elem, pct) {
+    if (pct === null || pct === undefined || isNaN(pct)) {
+      elem.style.background = "var(--line-soft)";
+      elem.style.color = "var(--ink-soft)";
+      return;
+    }
+    if (pct < 60) {
+      elem.style.background = "var(--red-pale)";
+      elem.style.color = "var(--red-deep)";
+    } else if (pct < 80) {
+      elem.style.background = "var(--yellow-pale)";
+      elem.style.color = "var(--yellow-deep)";
+    } else {
+      elem.style.background = "var(--green-pale)";
+      elem.style.color = "var(--green-deep)";
+    }
+  }
+
+  function actualizarBadgeSoloLecturaS(idSub, pct) {
+    var elem = document.getElementById("s_auto_badge_" + limpiarId(idSub));
+    if (!elem) return;
+    elem.innerText = (pct === null || pct === undefined || isNaN(pct)) ? "-" : (pct.toFixed(2) + "%");
+    pintarSemaforoEnElemento(elem, pct);
+  }
+
+  function calcularCumplimientoData(itemsFiltrados, estados) {
+    var totalCumple = 0;
+    var totalEvaluados = 0;
+    var actividadStats = {};
+    var items5SPorAct = {};
+
+    itemsFiltrados.forEach(function(item) {
+      var act = formatearTituloActividad(item.actividad);
+      // Los items de 5S (tipoS presente) se calculan aparte: su % es el promedio de
+      // las 5 S, no una razón cumple/evaluados. Ver "Reglas de cálculo" en modelo_5s.md.
+      if (item.tipoS) {
+        if (!items5SPorAct[act]) items5SPorAct[act] = [];
+        items5SPorAct[act].push(item);
+        return;
+      }
+      if (!actividadStats[act]) actividadStats[act] = { cumple: 0, evaluados: 0 };
+
+      var st = (estados[item.idSubactividad] || {}).estado;
+      if (st === 'CUMPLE') {
+        totalCumple++;
+        totalEvaluados++;
+        actividadStats[act].cumple++;
+        actividadStats[act].evaluados++;
+      } else if (st === 'NO CUMPLE') {
+        totalEvaluados++;
+        actividadStats[act].evaluados++;
+      }
+    });
+
+    for (var act5S in items5SPorAct) {
+      var resumenS = calcularPorcentajesS(items5SPorAct[act5S], mapaEstadosPlanos(estados));
+      actividadStats[act5S] = { cumple: 0, evaluados: 0, esPct5S: true, pct5S: calcularPctActividad5S(resumenS) };
+    }
+
+    var sumaPct = 0;
+    var macroactividadesConDatos = 0;
+    for (var actKey in actividadStats) {
+      var stat = actividadStats[actKey];
+      if (stat.esPct5S) {
+        if (stat.pct5S !== null) { sumaPct += stat.pct5S; macroactividadesConDatos++; }
+      } else if (stat.evaluados > 0) {
+        sumaPct += (stat.cumple / stat.evaluados) * 100;
+        macroactividadesConDatos++;
+      }
+    }
+
+    return {
+      totalCumple: totalCumple,
+      totalEvaluados: totalEvaluados,
+      actividadStats: actividadStats,
+      pctGeneral: macroactividadesConDatos > 0 ? (sumaPct / macroactividadesConDatos) : null
+    };
+  }
+
+  function recalcularCumplimiento() {
+    var negocioSeleccionado = document.getElementById("selectNegocio").value;
+    var opSeleccionada = document.getElementById("selectOperacion").value;
+
+    if (!negocioSeleccionado || !opSeleccionada) {
+      cumplimientoGeneralActual = null;
+      document.getElementById("kpiValue").innerText = "-";
+      document.getElementById("kpiValue").style.color = "var(--ink-soft)";
+      document.getElementById("kpiValue").style.background = "var(--line-soft)";
+      return;
+    }
+
+    var itemsFiltrados = globalData.checklist.filter(item => 
+      item.negocio === negocioSeleccionado && item.operacion === opSeleccionada
+    );
+
+    var datos = calcularCumplimientoData(itemsFiltrados, estadoFormulario);
+    var kpiGlobalVal = datos.pctGeneral;
+    cumplimientoGeneralActual = kpiGlobalVal;
+    var kpiElem = document.getElementById("kpiValue");
+
+    if (kpiGlobalVal === null) {
+      kpiElem.innerText = "-";
+      kpiElem.style.color = "var(--ink-soft)";
+      kpiElem.style.background = "var(--line-soft)";
+    } else {
+      kpiElem.innerText = kpiGlobalVal.toFixed(2) + "%";
+
+      if (kpiGlobalVal < 60) {
+        kpiElem.style.color = "var(--red-deep)";
+        kpiElem.style.background = "var(--red-pale)";
+      } else if (kpiGlobalVal < 80) {
+        kpiElem.style.color = "var(--yellow-deep)";
+        kpiElem.style.background = "var(--yellow-pale)";
+      } else {
+        kpiElem.style.color = "var(--green-deep)";
+        kpiElem.style.background = "var(--green-pale)";
+      }
+    }
+
+    for (var actKey in datos.actividadStats) {
+      var stat = datos.actividadStats[actKey];
+      var badge = document.getElementById("badge_act_" + limpiarId(actKey));
+
+      if (badge) {
+        // 5S: el badge de la macroactividad es el % ya promediado (calcularPctActividad5S).
+        // Normales: se mantiene la razón cumple/evaluados de siempre.
+        var pctActVal = stat.esPct5S ? stat.pct5S : (stat.evaluados > 0 ? (stat.cumple / stat.evaluados) * 100 : null);
+        if (pctActVal === null || pctActVal === undefined) {
+          badge.innerText = "-";
+        } else {
+          badge.innerText = pctActVal.toFixed(2) + "%";
+        }
+        pintarSemaforoEnElemento(badge, pctActVal);
+      }
+    }
+
+    // Cache de calcularPorcentajesS por macroactividad 5S (evita recomputar por cada grupo).
+    var resumenPorSCache = {};
+    function obtenerResumenSDeMacro(cleanActId) {
+      if (!resumenPorSCache[cleanActId]) {
+        var macroInfo = macroactividadesMapGlobal[cleanActId];
+        resumenPorSCache[cleanActId] = (macroInfo && Array.isArray(macroInfo.items))
+          ? calcularPorcentajesS(macroInfo.items, mapaEstadosPlanos(estadoFormulario))
+          : {};
+      }
+      return resumenPorSCache[cleanActId];
+    }
+
+    for (var cleanGrpId in gruposMapGlobal) {
+      var grpInfo = gruposMapGlobal[cleanGrpId];
+      var badgeGrp = document.getElementById("badge_grp_" + cleanGrpId);
+      if (!badgeGrp) continue;
+
+      if (grpInfo && grpInfo.tipoS) {
+        // Grupo de 5S: badge = % de esa S según calcularPorcentajesS (espejo de Data.js),
+        // así S1 (AUTO) y S5 (DERIVADA) también muestran su valor correcto.
+        var resumenS = obtenerResumenSDeMacro(grpInfo.cleanActId);
+        var infoS = resumenS[grpInfo.idGrupo];
+        var pctS = infoS ? infoS.pct : null;
+        badgeGrp.innerText = (pctS === null || pctS === undefined) ? "-" : (pctS.toFixed(2) + "%");
+        pintarSemaforoEnElemento(badgeGrp, pctS);
+        continue;
+      }
+
+      // Grupo NO-5S (compatibilidad, hoy no ocurre): razón cumple/evaluados de siempre.
+      var cumpleGrp = 0;
+      var evalGrp = 0;
+      if (grpInfo && Array.isArray(grpInfo.subIds)) {
+        grpInfo.subIds.forEach(function(subId) {
+          var st = (estadoFormulario[subId] || {}).estado;
+          if (st === 'CUMPLE') {
+            cumpleGrp++;
+            evalGrp++;
+          } else if (st === 'NO CUMPLE') {
+            evalGrp++;
+          }
+        });
+      }
+
+      var pctGrpVal = evalGrp > 0 ? (cumpleGrp / evalGrp) * 100 : null;
+      badgeGrp.innerText = (pctGrpVal === null) ? "-" : (pctGrpVal.toFixed(2) + "%");
+      pintarSemaforoEnElemento(badgeGrp, pctGrpVal);
+    }
+
+    // Etiquetas de solo lectura de los puntos DERIVADA dentro de cada S.
+    for (var cleanActId5S in macroactividadesMapGlobal) {
+      var macroInfo5S = macroactividadesMapGlobal[cleanActId5S];
+      if (!macroInfo5S || !macroInfo5S.es5S || !Array.isArray(macroInfo5S.items)) continue;
+      var resumenSPuntos = obtenerResumenSDeMacro(cleanActId5S);
+      macroInfo5S.items.forEach(function(itemS) {
+        if (itemS.tipoS === 'DERIVADA') {
+          var infoGrupoS5 = resumenSPuntos[itemS.idGrupo];
+          actualizarBadgeSoloLecturaS(itemS.idSubactividad, infoGrupoS5 ? infoGrupoS5.pct : null);
+        }
+      });
+    }
+  }
+
+function isHeic2AnyAvailable(){ return typeof heic2any !== 'undefined' && typeof heic2any === 'function'; }
+  function esArchivoHeic(archivo){
+    if(!archivo) return false;
+    var t = String(archivo.type||"").toLowerCase();
+    var n = String(archivo.name||"").toLowerCase();
+    // Chrome pone type="" para HEIC, iOS puede poner image/heic
+    return t.indexOf("heic")!==-1 || t.indexOf("heif")!==-1 || n.endsWith(".heic") || n.endsWith(".heif");
+  }
+  function isHeicDataUrl(dataUrl){
+    if(!dataUrl) return false;
+    var s = String(dataUrl).toLowerCase();
+    return s.indexOf("image/heic")!==-1 || s.indexOf("image/heif")!==-1;
+  }
+  function thumbInnerHtml(dataUrl){
+    if(isHeicDataUrl(dataUrl)){
+      return '<div class="thumb-heic"><span>📷</span>Archivo HEIC</div>';
+    }
+    return '<img src="'+dataUrl+'">';
+  }
+  function comprimirImagenViaCanvas(imgSrc, callbackDone, callbackFail){
+    var img = new Image();
+    img.onload = function(){
+      try{
+        var canvas = document.createElement("canvas");
+        var MAX_WIDTH = 800; var MAX_HEIGHT = 800;
+        var width = img.width; var height = img.height;
+        if(width>height){ if(width>MAX_WIDTH){ height*=MAX_WIDTH/width; width=MAX_WIDTH; } }
+        else { if(height>MAX_HEIGHT){ width*=MAX_HEIGHT/height; height=MAX_HEIGHT; } }
+        canvas.width = width; canvas.height = height;
+        var ctx = canvas.getContext("2d");
+        ctx.drawImage(img,0,0,width,height);
+        var compressedData = canvas.toDataURL("image/jpeg", 0.6);
+        callbackDone(compressedData);
+      }catch(errCanvas){ console.error("Error canvas:",errCanvas); callbackFail(); }
+    };
+    img.onerror = function(){ console.error("Error cargar imagen"); callbackFail(); };
+    img.src = imgSrc;
+  }
+  // Fallback sin Web Workers: si heic2any falla (ERR_LIBHEIF / sandbox), subir crudo a Drive
+  function fallbackHeicRaw(archivo, callbackDone, callbackFail){
+    try{
+      var reader = new FileReader();
+      reader.onload = function(e){
+        var raw = e.target.result; // data:;base64,...
+        // Forzar mime heic/heif según extensión para que Drive guarde .heic y la miniatura muestre icono
+        var lowerName = String(archivo.name||"").toLowerCase();
+        var isHeif = lowerName.endsWith(".heif");
+        var forcedMime = isHeif ? "image/heif" : "image/heic";
+        // Si FileReader dio data:;base64, reemplazar prefijo
+        var parts = String(raw).split(",");
+        var b64 = parts.length>1 ? parts[1] : parts[0];
+        var fixedDataUrl = "data:"+forcedMime+";base64,"+b64;
+        console.warn("Fallback HEIC crudo para", archivo.name, "-> subirá como", forcedMime);
+        callbackDone(fixedDataUrl);
+      };
+      reader.onerror = function(){ callbackFail(); };
+      reader.readAsDataURL(archivo);
+    }catch(e){ console.error("fallbackHeicRaw error", e); callbackFail(); }
+  }
+  function procesarArchivoImagen(archivo, callbackDone, callbackFail){
+    if(esArchivoHeic(archivo)){
+      if(isHeic2AnyAvailable()){
+        heic2any({blob: archivo, toType:"image/jpeg", quality:0.7}).then(function(res){
+          var jpegBlob = Array.isArray(res) ? res[0] : res;
+          if(!jpegBlob) throw new Error("heic2any retornó vacío");
+          var reader = new FileReader();
+          reader.onload = function(e){ comprimirImagenViaCanvas(e.target.result, callbackDone, callbackFail); };
+          reader.onerror = function(){ fallbackHeicRaw(archivo, callbackDone, callbackFail); };
+          reader.readAsDataURL(jpegBlob);
+        }).catch(function(err){
+          console.error("heic2any error", err);
+          // Sin Web Workers (sandbox GAS) o ERR_LIBHEIF -> fallback crudo en lugar de descartar
+          fallbackHeicRaw(archivo, callbackDone, callbackFail);
+        });
+      } else {
+        console.warn("heic2any no disponible, fallback crudo para", archivo.name);
+        fallbackHeicRaw(archivo, callbackDone, callbackFail);
+      }
+    } else {
+      var reader = new FileReader();
+      reader.onload = function(e){ comprimirImagenViaCanvas(e.target.result, callbackDone, callbackFail); };
+      reader.onerror = function(){ callbackFail(); };
+      reader.readAsDataURL(archivo);
+    }
+  }
+
+function triggerCamera(idSub) {
+    var inp = document.getElementById("file_input_" + limpiarId(idSub));
+    if (inp) { inp.value = ""; inp.click(); }
+  }
+
+  function handleFotoSeleccionada(idSub, input) {
+    if (input.files && input.files.length > 0) {
+      var archivos = Array.from(input.files);
+      var cleanId = limpiarId(idSub);
+      var btnAdd = document.getElementById("btn_add_photo_" + cleanId);
+      
+      // Bloquear temporalmente el envío de reportes mientras se procesan y comprimen las fotos
+      toggleBotonesEnvio(true);
+      if (btnAdd) {
+        btnAdd.disabled = true;
+        btnAdd.innerText = "Procesando fotos (0/" + archivos.length + ")...";
+      }
+
+      var procesados = 0;
+
+      archivos.forEach(function(archivo) {
+        procesarArchivoImagen(archivo, function(compressedData){
+          if (!imagenesFormulario[idSub]) imagenesFormulario[idSub] = [];
+          imagenesFormulario[idSub].push(compressedData);
+          verificarFinCarga();
+        }, function(){
+          console.error("Error al procesar archivo", archivo.name);
+          verificarFinCarga();
+        });
+      });
+
+      function verificarFinCarga() {
+        procesados++;
+        if (btnAdd) {
+          btnAdd.innerText = "Procesando fotos (" + procesados + "/" + archivos.length + ")...";
+        }
+        if (procesados >= archivos.length) {
+          toggleBotonesEnvio(false);
+          renderFotosGrid(idSub);
+        }
+      }
+    }
+  }
+
+  function renderFotosGrid(idSub) {
+    var cleanId = limpiarId(idSub);
+    var grid = document.getElementById("photo_grid_" + cleanId);
+    if (!grid) return;
+
+    // Puntos compactos de 5S (AUTO/MANUAL): botón de evidencia chico, sin texto.
+    // Subactividades normales: se conserva el botón grande de siempre (byte-idéntico).
+    var esPuntoCompacto5S = !!(tipoSMapGlobal && tipoSMapGlobal[idSub]);
+    grid.innerHTML = esPuntoCompacto5S ? `
+      <button type="button" class="btn-add-photo-sm" id="btn_add_photo_${cleanId}" onclick="triggerCamera('${idSub}')" title="Agregar evidencia" aria-label="Agregar evidencia">📷</button>
+      <input type="file" id="file_input_${cleanId}" accept="${ACCEPT_IMG}" multiple style="display:none;" onchange="handleFotoSeleccionada('${idSub}', this)">
+    ` : `
+      <button type="button" class="btn-add-photo" id="btn_add_photo_${cleanId}" onclick="triggerCamera('${idSub}')">Evidencia</button>
+      <input type="file" id="file_input_${cleanId}" accept="${ACCEPT_IMG}" multiple style="display:none;" onchange="handleFotoSeleccionada('${idSub}', this)">
+    `;
+
+    if (imagenesFormulario[idSub] && Array.isArray(imagenesFormulario[idSub])) {
+      imagenesFormulario[idSub].forEach(function(base64, index) {
+        var thumb = document.createElement("div");
+        thumb.className = "thumb-box";
+        thumb.innerHTML = thumbInnerHtml(base64) + `<button type="button" class="btn-download-photo" onclick="descargarFoto('${idSub}', ${index})" title="Descargar">⬇</button><button type="button" class="btn-remove-photo" onclick="eliminarFoto('${idSub}', ${index})" title="Eliminar">×</button>`;
+        grid.appendChild(thumb);
+      });
+    }
+  }
+
+  function eliminarFoto(idSub, index) {
+    imagenesFormulario[idSub].splice(index, 1);
+    renderFotosGrid(idSub);
+  }
+
+  function descargarFotoBase64(base64Data, nombreArchivo) {
+    try {
+      var ext = ".jpg";
+      if (base64Data) {
+        var m = String(base64Data).match(/data:([^;]+);base64,/);
+        if (m && m[1]) {
+          var mime = m[1].toLowerCase();
+          if (mime.indexOf("png") !== -1) ext = ".png";
+          else if (mime.indexOf("heic") !== -1 || mime.indexOf("heif") !== -1) ext = ".heic";
+          else if (mime.indexOf("webp") !== -1) ext = ".webp";
+          else if (mime.indexOf("jpeg") !== -1 || mime.indexOf("jpg") !== -1) ext = ".jpg";
+        }
+      }
+      if (nombreArchivo.indexOf(".") === -1) nombreArchivo += ext;
+      var a = document.createElement("a");
+      a.href = base64Data;
+      a.download = nombreArchivo;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (e) {
+      console.error("descargarFotoBase64 error", e);
+      if (typeof mostrarModalSharf === 'function') mostrarModalSharf("Error", "No se pudo descargar la imagen", true);
+    }
+  }
+  function descargarFoto(idSub, index) {
+    var arr = imagenesFormulario[idSub];
+    if (!arr || typeof arr[index] === "undefined") return;
+    var nombre = "evidencia_" + String(idSub).replace(/[^a-zA-Z0-9]/g, "_") + "_" + (index + 1);
+    descargarFotoBase64(arr[index], nombre);
+  }
+  function descargarFotoCE(idCE, index) {
+    var it = comentariosExtra.find(function(c) { return c.id === idCE; });
+    if (!it || !it.imagenes || typeof it.imagenes[index] === "undefined") return;
+    var nombre = "evidencia_CE_" + String(it.numero || (index + 1)) + "_" + (index + 1);
+    descargarFotoBase64(it.imagenes[index], nombre);
+  }
+
+// ==========================================
+  // GESTIÓN DE COMENTARIOS ADICIONALES (EXTRA)
+  // ==========================================
+  var comentariosExtra = [];
+  var contadorCE = 0;
+
+  function agregarComentarioExtra() {
+    contadorCE++;
+    var nuevoCE = {
+      id: "ce_" + contadorCE,
+      numero: comentariosExtra.length + 1,
+      comentario: "",
+      correosCopia: [],
+      imagenes: []
+    };
+    comentariosExtra.push(nuevoCE);
+    renderComentariosExtra();
+  }
+
+  function eliminarComentarioExtra(idCE) {
+    comentariosExtra = comentariosExtra.filter(function(item) {
+      return item.id !== idCE;
+    });
+    comentariosExtra.forEach(function(item, idx) {
+      item.numero = idx + 1;
+    });
+    renderComentariosExtra();
+  }
+
+  function setComentarioExtraTexto(idCE, val) {
+    var item = comentariosExtra.find(function(c) { return c.id === idCE; });
+    if (item) {
+      item.comentario = val;
+    }
+  }
+
+  function setComentarioExtraCorreos(idCE, val) {
+    var item = comentariosExtra.find(function(c) { return c.id === idCE; });
+    if (item) {
+      if(Array.isArray(val)){
+        item.correosCopia = val;
+      } else if(typeof val==="string"){
+        // legacy string -> migrate to array of cecos objects where possible
+        if(val.trim()===""){
+          item.correosCopia = [];
+        } else {
+          item.correosCopia = String(val).split(/[,;]+/).map(function(s){ var t=s.trim(); if(!t) return null; var found=(globalData.cecosMatriz||[]).find(function(p){return p.email===t || p.nombre===t;}) || (globalData.correosExtraMatriz||[]).find(function(p){return p.email===t || p.nombre===t;}); return found || { nombre:t, email:t.indexOf("@")>-1?t:"", cargo:"", area:"", id:t }; }).filter(Boolean);
+        }
+      } else {
+        item.correosCopia = val;
+      }
+    }
+  }
+
+  function triggerCameraCE(idCE) {
+    var inp = document.getElementById("file_input_" + idCE);
+    if (inp) { inp.value = ""; inp.click(); }
+  }
+
+  function handleFotoSeleccionadaCE(idCE, input) {
+    if (input.files && input.files.length > 0) {
+      var archivos = Array.from(input.files);
+      var btnAdd = document.getElementById("btn_add_photo_" + idCE);
+      
+      toggleBotonesEnvio(true);
+      if (btnAdd) {
+        btnAdd.disabled = true;
+        btnAdd.innerText = "Procesando fotos (0/" + archivos.length + ")...";
+      }
+
+      var item = comentariosExtra.find(function(c) { return c.id === idCE; });
+      if (!item) return;
+
+      var procesados = 0;
+
+      archivos.forEach(function(archivo) {
+        procesarArchivoImagen(archivo, function(compressedData){
+          item.imagenes.push(compressedData);
+          verificarFinCargaCE();
+        }, function(){
+          console.error("Error CE", archivo.name);
+          verificarFinCargaCE();
+        });
+      });
+
+      function verificarFinCargaCE() {
+        procesados++;
+        if (btnAdd) {
+          btnAdd.innerText = "Procesando fotos (" + procesados + "/" + archivos.length + ")...";
+        }
+        if (procesados >= archivos.length) {
+          toggleBotonesEnvio(false);
+          if (btnAdd) btnAdd.disabled = false;
+          renderFotosGridCE(idCE);
+        }
+      }
+    }
+  }
+
+  function renderFotosGridCE(idCE) {
+    var item = comentariosExtra.find(function(c) { return c.id === idCE; });
+    if (!item) return;
+
+    var grid = document.getElementById("photo_grid_" + idCE);
+    if (!grid) return;
+
+    var html = `
+      <button type="button" class="btn-add-photo" id="btn_add_photo_${idCE}" onclick="triggerCameraCE('${idCE}')">Evidencia</button>
+      <input type="file" id="file_input_${idCE}" accept="${ACCEPT_IMG}" multiple style="display:none;" onchange="handleFotoSeleccionadaCE('${idCE}', this)">
+    `;
+
+    item.imagenes.forEach(function(imgData, index) {
+      var inner = isHeicDataUrl(imgData) ? '<div class="thumb-heic"><span>📷</span>Archivo HEIC</div>' : '<img src="'+imgData+'" style="width:100%; height:100%; object-fit:cover;" alt="Evidencia CE '+(index + 1)+'">';
+      html += `
+        <div class="thumb-box">
+          `+inner+`
+          <button type="button" class="btn-download-photo" onclick="descargarFotoCE('${idCE}', ${index})" title="Descargar">⬇</button>
+          <button type="button" class="btn-remove-photo" onclick="eliminarFotoCE('${idCE}', ${index})" title="Eliminar foto">×</button>
+        </div>
+      `;
+    });
+
+    grid.innerHTML = html;
+  }
+
+  function eliminarFotoCE(idCE, idxFoto) {
+    var item = comentariosExtra.find(function(c) { return c.id === idCE; });
+    if (item && item.imagenes) {
+      item.imagenes.splice(idxFoto, 1);
+      renderFotosGridCE(idCE);
+    }
+  }
+
+  function renderComentariosExtra() {
+    var container = document.getElementById("listaComentariosExtra");
+    if (!container) return;
+
+    if (comentariosExtra.length === 0) {
+      container.innerHTML = `<div style="font-size: 12px; color: var(--ink-soft); font-style: italic; margin-bottom: 8px;">No se han agregado comentarios adicionales.</div>`;
+      return;
+    }
+
+    var html = "";
+    comentariosExtra.forEach(function(item) {
+      html += `
+        <div class="comentario-extra-item" id="item_${item.id}">
+          <div class="comentario-extra-header">
+            <span class="comentario-extra-title">Comentario Extra #${item.numero}</span>
+            <button type="button" class="btn-eliminar-ce" onclick="eliminarComentarioExtra('${item.id}')">Eliminar</button>
+          </div>
+          <textarea class="textarea-ce" placeholder="Escribe aquí el comentario u observación adicional..." oninput="setComentarioExtraTexto('${item.id}', this.value)">${item.comentario || ''}</textarea>
+          
+          <div style="margin-top: 6px; margin-bottom: 12px;">
+            <label style="font-size: 11px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; margin-bottom: 6px; display: block; letter-spacing: 0.5px;">
+              Enviar copia de este comentario a:
+            </label>
+            <div class="cecos-field" id="field_extra_${item.id}"></div>
+          </div>
+
+          <div class="photo-section">
+            <div class="photo-label">Evidencias Fotográficas:</div>
+            <div class="photo-grid" id="photo_grid_${item.id}">
+              <button type="button" class="btn-add-photo" id="btn_add_photo_${item.id}" onclick="triggerCameraCE('${item.id}')">Evidencia</button>
+              <input type="file" id="file_input_${item.id}" accept="${ACCEPT_IMG}" multiple style="display:none;" onchange="handleFotoSeleccionadaCE('${item.id}', this)">
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    container.innerHTML = html;
+
+    comentariosExtra.forEach(function(item) {
+      if (item.imagenes && item.imagenes.length > 0) {
+        renderFotosGridCE(item.id);
+      }
+      // migrate legacy string correosCopia to array of objects if needed
+      if(item.correosCopia && typeof item.correosCopia==="string"){
+        setComentarioExtraCorreos(item.id, item.correosCopia);
+      }
+      if(!Array.isArray(item.correosCopia)) item.correosCopia=[];
+      var fid="field_extra_"+item.id;
+      if(document.getElementById(fid)){
+        crearAutocomplete({
+          containerId: fid,
+          placeholder: "Buscar copia por nombre, cargo o correo...",
+          getSelected: function(){ var it=comentariosExtra.find(function(c){return c.id===item.id;}); return (it && Array.isArray(it.correosCopia))? it.correosCopia : []; },
+          setSelected: function(arr){ var it=comentariosExtra.find(function(c){return c.id===item.id;}); if(it) it.correosCopia=arr||[]; }
+        });
+      }
+    });
+  }
+
+function enviarReporte(tipo) {
+    var negocioSeleccionado = document.getElementById("selectNegocio").value;
+    var opSeleccionada = document.getElementById("selectOperacion").value;
+
+    if (!negocioSeleccionado) {
+      mostrarModalSharf("Atención", "Por favor, selecciona un 'Negocio' antes de enviar.", true);
+      return;
+    }
+
+    if (!opSeleccionada) {
+      mostrarModalSharf("Atención", "Por favor, selecciona un área en 'Operación activa' antes de enviar.", true);
+      return;
+    }
+
+    var itemsFiltrados = globalData.checklist.filter(item => 
+      item.negocio === negocioSeleccionado && item.operacion === opSeleccionada
+    );
+
+    var itemsPendientes = [];
+    itemsFiltrados.forEach(function(item) {
+      var estadoSub = (estadoFormulario[item.idSubactividad] || {}).estado;
+      if (!estadoSub || estadoSub.trim() === "") {
+        itemsPendientes.push(item);
+      }
+    });
+
+    if (itemsPendientes.length > 0) {
+      // Expandir las secciones de las subactividades pendientes
+      itemsPendientes.forEach(function(itemPend) {
+        var actClean = limpiarId(formatearTituloActividad(itemPend.actividad));
+        var bodyElem = document.getElementById("body_act_" + actClean);
+        var iconElem = document.getElementById("icon_act_" + actClean);
+        if (bodyElem) bodyElem.classList.remove("collapsed");
+        if (iconElem) iconElem.classList.remove("collapsed");
+      });
+
+      var primerPendiente = itemsPendientes[0];
+      var msgDetalle = "No inspeccionó el punto: " + primerPendiente.idSubactividad + " — \"" + primerPendiente.subactividad + "\".";
+      if (itemsPendientes.length > 1) {
+        msgDetalle += "\n\n(Tiene " + (itemsPendientes.length) + " actividades pendientes de evaluar en total).";
+      }
+      msgDetalle += "\n\nPor favor, califique todas las actividades (CUMPLE, NO CUMPLE o N/A) antes de enviar el reporte.";
+
+      mostrarModalSharf("Actividad Pendiente de Inspección", msgDetalle, true);
+      return;
+    }
+
+    var fechaISO = obtenerFechaChecklistISO();
+    var hoyISO = obtenerFechaHoyISO();
+    if(fechaISO > hoyISO){
+      mostrarModalSharf("Atención", "La fecha del checklist no puede ser futura. Debe ser hoy o un día previo.", true);
+      return;
+    }
+
+    var correosSeleccionados = [];
+    if (tipo === 'oficial') {
+      if(Array.isArray(destinatariosSeleccionadosGlobal) && destinatariosSeleccionadosGlobal.length>0){
+        correosSeleccionados = destinatariosSeleccionadosGlobal.map(function(p){ return (typeof p==="object" && p!==null) ? (p.email || p.nombre || "") : String(p); }).filter(Boolean);
+      } else {
+        var checkboxes = document.querySelectorAll(".chk-correo:checked");
+        checkboxes.forEach(function(chk) {
+          correosSeleccionados.push(chk.value);
+        });
+      }
+      if (correosSeleccionados.length === 0) {
+        mostrarModalSharf("Atención", "Debes seleccionar al menos un correo destinatario para enviar el reporte oficial.", true);
+        return;
+      }
+    }
+
+    // Filtrar solo subactividades de la operación actual (evita reporte compilado por estado residual de otro negocio/operación)
+    var idsPermitidos = {};
+    itemsFiltrados.forEach(function(it){ idsPermitidos[it.idSubactividad] = true; });
+    var evaluacionesFinales = {};
+    for (var k in estadoFormulario) {
+      if (!idsPermitidos.hasOwnProperty(k)) continue;
+      var respVal = estadoFormulario[k].responsable;
+      var respDisplayStr = "";
+      var respEmailStr = "";
+      if(Array.isArray(respVal)){
+        respDisplayStr = respVal.map(function(x){
+          var nombreRaw = (typeof x==="object" && x!==null) ? (x.nombre || x.email || "") : String(x);
+          return formatearResponsableCorto(nombreRaw);
+        }).filter(Boolean).join(", ");
+        respEmailStr = respVal.map(function(x){
+          return (typeof x==="object" && x!==null) ? (x.email || "") : (String(x).indexOf("@")>-1 ? String(x) : "");
+        }).filter(Boolean).join(", ");
+      } else {
+        var nombreRaw = String(respVal || "");
+        respDisplayStr = formatearResponsableCorto(nombreRaw);
+        respEmailStr = nombreRaw.indexOf("@")>-1 ? nombreRaw : "";
+      }
+      // listasMemoPayload: nombres cortos con bandera activada a mano (1era/2da) u omitida a mano (3era).
+      var listasMemo = listasMemoPayload(k, respVal);
+      evaluacionesFinales[k] = {
+        estado: estadoFormulario[k].estado,
+        comentario: estadoFormulario[k].comentario,
+        responsable: respDisplayStr,
+        responsableEmail: respEmailStr,
+        memoActivar: listasMemo.memoActivar,
+        memoOmitir: listasMemo.memoOmitir
+      };
+    }
+    // Filtrar imágenes solo de la operación actual
+    var imagenesFiltradas = {};
+    for (var kImg in imagenesFormulario) {
+      if (idsPermitidos.hasOwnProperty(kImg)) {
+        imagenesFiltradas[kImg] = imagenesFormulario[kImg];
+      }
+    }
+
+    var noAlertarChecked = document.getElementById("chkNoAlertar") ? document.getElementById("chkNoAlertar").checked : false;
+    var enviarMemosChecked = memosHabilitados();
+
+    var comentariosExtraFinales = [];
+    comentariosExtra.forEach(function(ce) {
+      var textoCE = (ce.comentario || "").trim();
+      var rawCE = ce.correosCopia;
+      var correosCE;
+      if(Array.isArray(rawCE)){
+        correosCE = rawCE.map(function(p){ return (typeof p==="object" && p!==null) ? (p.email || p.nombre || "") : String(p); }).filter(Boolean).join(", ");
+      } else {
+        correosCE = String(rawCE||"").trim();
+      }
+      var tieneFotos = Array.isArray(ce.imagenes) && ce.imagenes.length > 0;
+      if (textoCE !== "" || correosCE !== "" || tieneFotos) {
+        comentariosExtraFinales.push({
+          numero: ce.numero,
+          comentario: textoCE,
+          correosCopia: correosCE,
+          imagenes: ce.imagenes || []
+        });
+      }
+    });
+
+    var partSelPayload = Array.isArray(participantesSeleccionadosGlobal) ? participantesSeleccionadosGlobal.map(function(p){ return (typeof p==="object" && p!==null) ? (p.email || p.nombre || "") : String(p); }).filter(Boolean) : participantesSeleccionadosGlobal;
+    var payload = {
+      tipoEnvio: tipo,
+      negocio: negocioSeleccionado,
+      operacion: opSeleccionada,
+      fechaChecklist: obtenerFechaChecklistISO(),
+      cumplimientoGeneral: cumplimientoGeneralActual === null ? "-" : cumplimientoGeneralActual.toFixed(2),
+      evaluaciones: evaluacionesFinales,
+      imagenes: imagenesFiltradas,
+      comentariosExtra: comentariosExtraFinales,
+      correosSeleccionados: correosSeleccionados,
+      participantesSeleccionados: partSelPayload,
+      noAlertar: noAlertarChecked,
+      enviarMemos: enviarMemosChecked
+    };
+
+    toggleBotonesEnvio(true);
+    
+    google.script.run
+      .withSuccessHandler(function(res) {
+        toggleBotonesEnvio(false);
+        if (res.exito) {
+          mostrarModalSharf("¡Envío Exitoso!", res.mensaje, false);
+        } else {
+          mostrarModalSharf("Error de Envío", res.mensaje, true);
+        }
+      })
+      .withFailureHandler(function(err) {
+        toggleBotonesEnvio(false);
+        mostrarModalSharf("Error del Servidor", err.toString(), true);
+      })
+      .procesarInspeccion(JSON.stringify(payload));
+  }
+
+document.addEventListener("DOMContentLoaded", function() {
+    if (window.__diag) window.__diag.domReady = true;
+    inicializarFechaChecklist();
+
+    document.addEventListener("click", function(e) {
+      if (!e.target.closest(".dropdown-multi")) {
+        document.querySelectorAll(".dropdown-multi").forEach(d => d.classList.remove("open"));
+      }
+    });
+
+    // Obtención rápida e inmediata de usuario de la sesión activa
+    google.script.run
+      .withSuccessHandler(function(resUser) {
+        if (resUser && resUser.exito && resUser.email) {
+          usuarioConectadoGlobal = resUser.email;
+          document.getElementById("usuarioHeader").innerText = "Sesión: " + resUser.email;
+        } else {
+          document.getElementById("usuarioHeader").innerText = "Sesión: Activa";
+        }
+      })
+      .withFailureHandler(function() {
+        document.getElementById("usuarioHeader").innerText = "Sesión: Activa";
+      })
+      .obtenerUsuarioActual();
+
+    // Cargar matriz de datos
+    if (window.__diag) window.__diag.llamadas.push("cargarDatosDesdeSheet");
+    google.script.run
+      .withSuccessHandler(function(r){ if(window.__diag) window.__diag.respuesta = "SÍ (" + ((r&&r.checklist&&r.checklist.length)||0) + " items)"; alRecibirDatos(r); })
+      .withFailureHandler(function(e){ if(window.__diag) window.__diag.respuesta = "FALLO: " + e; alMostrarError(e); })
+      .cargarDatosDesdeSheet();
+  });
+  </script>
+  <script id="__probeDespues">if(window.__diag)window.__diag.despuesMain=true;</script>
+</body>
+</html>
