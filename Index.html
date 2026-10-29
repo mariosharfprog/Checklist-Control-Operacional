@@ -479,6 +479,7 @@
           <span class="select-label">Fecha del checklist:</span>
           <input type="date" id="fechaChecklist" class="input-fecha" onchange="alCambiarFechaChecklist()">
           <div style="font-size: 11px; color: var(--ink-soft); margin-top: 4px;">Por defecto hoy. Solo permite días previos, no futuros.</div>
+          <div id="draftSaveStatus" role="status" aria-live="polite" style="font-size: 11px; color: var(--ink-soft); margin-top: 4px;">Los cambios se guardan automáticamente en este navegador.</div>
         </div>
       </div>
 
@@ -1189,6 +1190,162 @@ var globalData = { checklist: [], cecosMatriz: [], correosExtraMatriz: [], perso
   var destinatariosSeleccionadosGlobal = [];
   var usuarioConectadoGlobal = "";
   var fechaChecklistGlobal = "";
+  var restaurandoBorrador = false;
+  var temporizadorGuardadoBorrador = null;
+  var CLAVE_BORRADOR_LOCAL = "sharf_inspeccion_borrador_v1_" +
+    String(window.location.host + window.location.pathname).replace(/[^a-zA-Z0-9_-]/g, "_");
+
+  function mostrarEstadoBorrador(texto, esError) {
+    var el = document.getElementById("draftSaveStatus");
+    if (!el) return;
+    el.textContent = texto;
+    el.style.color = esError ? "var(--red-deep)" : "var(--ink-soft)";
+  }
+
+  function crearDatosBorrador(incluirImagenes) {
+    var comentariosGuardados = comentariosExtra.map(function(item) {
+      return {
+        id: item.id,
+        numero: item.numero,
+        comentario: item.comentario || "",
+        correosCopia: item.correosCopia || [],
+        imagenes: incluirImagenes ? (item.imagenes || []) : []
+      };
+    });
+    return {
+      version: 1,
+      guardadoEn: new Date().toISOString(),
+      negocio: document.getElementById("selectNegocio").value,
+      operacion: document.getElementById("selectOperacion").value,
+      fechaChecklist: obtenerFechaChecklistISO(),
+      estadoFormulario: estadoFormulario,
+      imagenesFormulario: incluirImagenes ? imagenesFormulario : {},
+      participantesSeleccionados: participantesSeleccionadosGlobal,
+      destinatariosSeleccionados: destinatariosSeleccionadosGlobal,
+      noAlertar: !!(document.getElementById("chkNoAlertar") && document.getElementById("chkNoAlertar").checked),
+      enviarMemos: !!(document.getElementById("chkEnviarMemos") && document.getElementById("chkEnviarMemos").checked),
+      memoSeleccionGlobal: memoSeleccionGlobal,
+      comentariosExtra: comentariosGuardados,
+      contadorCE: contadorCE
+    };
+  }
+
+  function guardarBorradorLocal() {
+    if (restaurandoBorrador || !document.getElementById("appContent")) return;
+    try {
+      localStorage.setItem(CLAVE_BORRADOR_LOCAL, JSON.stringify(crearDatosBorrador(true)));
+      mostrarEstadoBorrador("Borrador guardado en este navegador.", false);
+    } catch (errorGuardado) {
+      var esCuota = errorGuardado && (
+        errorGuardado.name === "QuotaExceededError" ||
+        errorGuardado.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+        errorGuardado.code === 22 ||
+        errorGuardado.code === 1014
+      );
+      if (esCuota) {
+        try {
+          localStorage.setItem(CLAVE_BORRADOR_LOCAL, JSON.stringify(crearDatosBorrador(false)));
+          mostrarEstadoBorrador("Borrador guardado, pero no se conservaron las fotos por falta de espacio.", true);
+          console.warn("El borrador se guardó sin fotos porque el almacenamiento local está lleno.", errorGuardado);
+          return;
+        } catch (errorSinImagenes) {
+          console.error("No se pudo guardar el borrador local.", errorSinImagenes);
+          mostrarEstadoBorrador("No se pudo guardar el borrador en este navegador.", true);
+          return;
+        }
+      }
+      console.error("No se pudo guardar el borrador local.", errorGuardado);
+      mostrarEstadoBorrador("No se pudo guardar el borrador en este navegador.", true);
+    }
+  }
+
+  function programarGuardadoBorrador() {
+    if (restaurandoBorrador) return;
+    clearTimeout(temporizadorGuardadoBorrador);
+    temporizadorGuardadoBorrador = setTimeout(guardarBorradorLocal, 350);
+  }
+
+  function restaurarBorradorLocal() {
+    var borrador;
+    try {
+      var textoBorrador = localStorage.getItem(CLAVE_BORRADOR_LOCAL);
+      if (!textoBorrador) return;
+      borrador = JSON.parse(textoBorrador);
+      if (!borrador || borrador.version !== 1) {
+        console.warn("Se encontró un borrador local con una versión no compatible.");
+        return;
+      }
+    } catch (errorLectura) {
+      console.error("No se pudo leer el borrador local.", errorLectura);
+      mostrarEstadoBorrador("No se pudo leer el borrador guardado.", true);
+      return;
+    }
+
+    restaurandoBorrador = true;
+    try {
+      var selectNegocio = document.getElementById("selectNegocio");
+      var selectOperacion = document.getElementById("selectOperacion");
+      var negocioValido = Array.from(selectNegocio.options).some(function(opcion) {
+        return opcion.value === borrador.negocio;
+      });
+      if (negocioValido) {
+        selectNegocio.value = borrador.negocio;
+        alCambiarNegocio();
+        var operacionValida = Array.from(selectOperacion.options).some(function(opcion) {
+          return opcion.value === borrador.operacion;
+        });
+        if (operacionValida) {
+          selectOperacion.value = borrador.operacion;
+          alCambiarOperacion();
+        }
+      }
+
+      if (borrador.fechaChecklist && /^\d{4}-\d{2}-\d{2}$/.test(borrador.fechaChecklist)) {
+        var fecha = borrador.fechaChecklist <= obtenerFechaHoyISO() ? borrador.fechaChecklist : obtenerFechaHoyISO();
+        document.getElementById("fechaChecklist").value = fecha;
+        alCambiarFechaChecklist();
+      }
+      if (borrador.estadoFormulario && typeof borrador.estadoFormulario === "object") {
+        estadoFormulario = borrador.estadoFormulario;
+      }
+      if (borrador.imagenesFormulario && typeof borrador.imagenesFormulario === "object") {
+        imagenesFormulario = borrador.imagenesFormulario;
+      }
+      participantesSeleccionadosGlobal = Array.isArray(borrador.participantesSeleccionados) ? borrador.participantesSeleccionados : [];
+      destinatariosSeleccionadosGlobal = Array.isArray(borrador.destinatariosSeleccionados) ? borrador.destinatariosSeleccionados : [];
+      memoSeleccionGlobal = borrador.memoSeleccionGlobal && typeof borrador.memoSeleccionGlobal === "object" ? borrador.memoSeleccionGlobal : {};
+      comentariosExtra = Array.isArray(borrador.comentariosExtra) ? borrador.comentariosExtra : [];
+      contadorCE = Math.max(Number(borrador.contadorCE) || 0, comentariosExtra.length);
+
+      var chkNoAlertar = document.getElementById("chkNoAlertar");
+      var chkEnviarMemos = document.getElementById("chkEnviarMemos");
+      if (chkNoAlertar) chkNoAlertar.checked = borrador.noAlertar === true;
+      if (chkEnviarMemos) chkEnviarMemos.checked = borrador.enviarMemos === true;
+
+      renderizarChecklist();
+      renderComentariosExtra();
+      if (window.initCecosAutocompletes) window.initCecosAutocompletes();
+      actualizarFechaHeaderDesdePicker();
+      mostrarEstadoBorrador("Se restauró el borrador guardado en este navegador.", false);
+    } catch (errorRestauracion) {
+      console.error("No se pudo restaurar el borrador local.", errorRestauracion);
+      mostrarEstadoBorrador("No se pudo restaurar el borrador guardado.", true);
+    } finally {
+      restaurandoBorrador = false;
+    }
+  }
+
+  function limpiarBorradorLocal() {
+    clearTimeout(temporizadorGuardadoBorrador);
+    temporizadorGuardadoBorrador = null;
+    try {
+      localStorage.removeItem(CLAVE_BORRADOR_LOCAL);
+      mostrarEstadoBorrador("Reporte oficial enviado; borrador local eliminado.", false);
+    } catch (errorLimpieza) {
+      console.error("No se pudo eliminar el borrador local.", errorLimpieza);
+      mostrarEstadoBorrador("El reporte se envió, pero no se pudo eliminar el borrador local.", true);
+    }
+  }
 
   function obtenerFechaHoyISO(){
     var hoy = new Date();
@@ -1287,6 +1444,7 @@ var globalData = { checklist: [], cecosMatriz: [], correosExtraMatriz: [], perso
       renderizarChecklist();
       renderComentariosExtra();
       if(window.initCecosAutocompletes) window.initCecosAutocompletes();
+      restaurarBorradorLocal();
     } catch (errRecibir) {
       console.error("Error en alRecibirDatos:", errRecibir);
       alMostrarError("Error procesando interfaz: " + errRecibir.toString());
@@ -2777,6 +2935,7 @@ function enviarReporte(tipo) {
       .withSuccessHandler(function(res) {
         toggleBotonesEnvio(false);
         if (res.exito) {
+          if (tipo === "oficial") limpiarBorradorLocal();
           mostrarModalSharf("¡Envío Exitoso!", res.mensaje, false);
         } else {
           mostrarModalSharf("Error de Envío", res.mensaje, true);
@@ -2792,6 +2951,14 @@ function enviarReporte(tipo) {
 document.addEventListener("DOMContentLoaded", function() {
     if (window.__diag) window.__diag.domReady = true;
     inicializarFechaChecklist();
+
+    var appContent = document.getElementById("appContent");
+    if (appContent) {
+      appContent.addEventListener("input", programarGuardadoBorrador);
+      appContent.addEventListener("change", programarGuardadoBorrador);
+      appContent.addEventListener("click", programarGuardadoBorrador);
+    }
+    window.addEventListener("pagehide", guardarBorradorLocal);
 
     document.addEventListener("click", function(e) {
       if (!e.target.closest(".dropdown-multi")) {
