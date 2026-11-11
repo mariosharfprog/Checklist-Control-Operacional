@@ -614,88 +614,203 @@ function calcularPctActividad5S(resumenPorS) {
 
 /**
  * CARGAR DATOS DESDE LAS HOJAS DE CONFIGURACIÓN
- * Dinámico cl_* + cecos con fallback legacy (Versión optimizada)
+ * Dinámico cl_* + cecos con fallback legacy
  */
-function cargarDatosDesdeSheet() {
-  try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var checklist = [];
-    var sheets = ss.getSheets();
+function cargarDatosDesdeSheet(){
+  try{
+    var ss=SpreadsheetApp.getActiveSpreadsheet();
+    var checklist=[];
+    var sheets=ss.getSheets();
     var prefijo = (typeof CONFIG !== 'undefined' && CONFIG.PREFIJO_CL) ? CONFIG.PREFIJO_CL : "cl_";
-    
-    var hojasCl = sheets.filter(function(s) {
+    var hojasCl=sheets.filter(function(s){
       var nombre = String(s.getName());
       return nombre.toLowerCase().startsWith(prefijo.toLowerCase()) && !esHoja5S(nombre) && !esHojaDetalle5S(nombre);
     });
-
     var plantillas5S = cargarPlantillas5S(ss);
     var detalle5S = cargarDetalle5S(ss);
-
+    // Contador secuencial por macro para corregir IDs con fecha (ej. 2026-01-01) -> 1.1, 1.2 ...
     var contadorPorMacro = {};
-    function siguienteIdSecuencial(negocio, operacion, idAct, filaIdx) {
-      var clave = String(negocio||"") + "|" + String(operacion||"") + "|" + String(idAct||"");
+    function siguienteIdSecuencial(negocio, operacion, idAct, filaIdx){
+      var clave = String(negocio||"")+"|"+String(operacion||"")+"|"+String(idAct||"");
       var actual = contadorPorMacro[clave] || 0;
       actual += 1;
       contadorPorMacro[clave] = actual;
       var base = String(idAct||"").trim();
       if (base === "" || base === "0") base = "1";
+      // Normalizar base sin punto final
       if (/^\d+(\.\d+)*\.$/.test(base)) base = base.slice(0,-1);
       return base + "." + actual;
     }
-
-    if (hojasCl.length > 0) {
-      hojasCl.forEach(function(sh) {
-        const negocio = capitalizarNegocio(String(sh.getName()).replace(/^cl_/i, ""));
-        
-        // ⚡ OPTIMIZACIÓN: Hacer una sola llamada getValues() en lugar de getDisplayValues + getValues
-        const vals = sh.getDataRange().getValues();
-        if (vals.length <= 1) return; // Si solo está el encabezado o está vacía, continuar
-
-        for (let i = 1; i < vals.length; i++) {
-          const fila = vals[i];
-          if (!fila[0] || String(fila[0]).trim() === "") continue;
-
+    if(hojasCl.length>0){
+      hojasCl.forEach(function(sh){
+        const negocio=capitalizarNegocio(String(sh.getName()).replace(/^cl_/i,""));
+        const vals=sh.getDataRange().getDisplayValues();
+        // También leer valores crudos para detectar Date objects (getValues vs getDisplayValues)
+        var valsRaw = null;
+        try { valsRaw = sh.getDataRange().getValues(); } catch(e){ valsRaw = vals; }
+        for(let i=1;i<vals.length;i++){
+          const fila=vals[i];
+          const filaRaw=valsRaw ? valsRaw[i] : fila;
+          if(!fila[0]||String(fila[0]).trim()==="") continue;
           var opRawCl = String(fila[0]).trim();
-          var idActCl = String(fila[1] !== undefined ? fila[1] : "").trim();
-          var idSecuencialCl = siguienteIdSecuencial(negocio, opRawCl, idActCl, i);
-
+          var opCanonCl = (typeof canonicalizarOperacion === 'function') ? canonicalizarOperacion(opRawCl) : opRawCl;
+          var idActRaw = fila[1]?String(fila[1]).trim():"";
+          var actRaw = fila[2]?String(fila[2]).trim():"GENERAL";
+          var idSubRawDisp = fila[3];
+          var idSubRawVal = filaRaw ? filaRaw[3] : idSubRawDisp;
+          var subRaw = fila[4]?String(fila[4]).trim():"";
+          // Normalizar ID: si es fecha o vacío o no parece ID tipo "1.1", generar secuencial
+          var idSubNorm = normalizarIdSubactividad(idSubRawDisp, "");
+          var esFecha = esIdFechaLike(idSubRawVal) || esIdFechaLike(idSubRawDisp);
+          var pareceIdValido = /^\d+(\.\d+)+$/.test(idSubNorm) || /^\d+$/.test(idSubNorm);
+          var idSubFinal;
+          if (!esFecha && pareceIdValido && idSubNorm !== "") {
+            idSubFinal = idSubNorm;
+            // Actualizar contador para no colisionar con futuros autogenerados
+            var claveCnt = String(negocio||"")+"|"+String(opCanonCl||"")+"|"+String(idActRaw||"");
+            var partes = idSubFinal.split(".");
+            var suf = parseInt(partes[partes.length-1],10);
+            if (!isNaN(suf)) {
+              var cur = contadorPorMacro[claveCnt] || 0;
+              if (suf > cur) contadorPorMacro[claveCnt] = suf;
+            }
+          } else {
+            // Generar secuencial dentro de la macro
+            idSubFinal = siguienteIdSecuencial(negocio, opCanonCl, idActRaw, i);
+          }
+          var subFinal = subRaw !== "" ? subRaw : (idSubFinal || "Punto "+i);
+          // Evitar que subactividad quede como fecha cuando el ID era fecha
+          if (esIdFechaLike(subFinal) && !esIdFechaLike(idSubFinal)) {
+            subFinal = "Punto "+idSubFinal;
+          }
           checklist.push({
             negocio: negocio,
-            operacion: opRawCl,
-            idActividad: idActCl,
-            idSecuencial: idSecuencialCl,
-            actividad: String(fila[2] !== undefined ? fila[2] : "").trim(),
-            subActividad: String(fila[3] !== undefined ? fila[3] : "").trim(),
-            standardText: String(fila[4] !== undefined ? fila[4] : "").trim(),
-            frecuencia: String(fila[5] !== undefined ? fila[5] : "").trim(),
-            critica: String(fila[6] !== undefined ? fila[6] : "").trim(),
-            fuenteHoja: sh.getName()
+            operacion: opCanonCl,
+            idActividad: idActRaw,
+            actividad: actRaw,
+            idSubactividad: idSubFinal,
+            subactividad: subFinal
           });
         }
       });
+      checklist = anexarMacro5S(checklist, plantillas5S, contadorPorMacro, detalle5S);
+    } else {
+      // fallback legacy Config_Checklist
+      var sheetChecklist = ss.getSheetByName(CONFIG.HOJA_CHECKLIST) || ss.getSheetByName("Checklist") || ss.getSheetByName("CHECKLIST") || ss.getSheetByName("checklist");
+      if(!sheetChecklist) return {status:"ERROR", message:"No se encontró Config_Checklist ni cl_*"};
+      var datosChecklist=sheetChecklist.getDataRange().getDisplayValues();
+      var valsRawLeg = null;
+      try { valsRawLeg = sheetChecklist.getDataRange().getValues(); } catch(e){ valsRawLeg = datosChecklist; }
+      for(let i=1;i<datosChecklist.length;i++){
+        const fila=datosChecklist[i];
+        const filaRawLeg = valsRawLeg ? valsRawLeg[i] : fila;
+        if(fila[0]&&fila[1]&&(fila[5]||fila[4])) {
+          var opRawLeg = String(fila[1]).trim();
+          var opCanonLeg = (typeof canonicalizarOperacion === 'function') ? canonicalizarOperacion(opRawLeg) : opRawLeg;
+          var idActLeg = String(fila[2]||"").trim();
+          var actLeg = String(fila[3]||"GENERAL").trim();
+          var idSubDispLeg = fila[4];
+          var idSubRawLegVal = filaRawLeg ? filaRawLeg[4] : idSubDispLeg;
+          var subDispLeg = fila[5]?String(fila[5]).trim():"";
+          var idSubNormLeg = normalizarIdSubactividad(idSubDispLeg, "");
+          var esFechaLeg = esIdFechaLike(idSubRawLegVal) || esIdFechaLike(idSubDispLeg);
+          var pareceIdLeg = /^\d+(\.\d+)+$/.test(idSubNormLeg) || /^\d+$/.test(idSubNormLeg);
+          var idSubFinalLeg;
+          var negLeg = String(fila[0]).trim();
+          if (!esFechaLeg && pareceIdLeg && idSubNormLeg !== "") {
+            idSubFinalLeg = idSubNormLeg;
+            var claveLeg = negLeg+"|"+opCanonLeg+"|"+idActLeg;
+            var partesLeg = idSubFinalLeg.split(".");
+            var sufLeg = parseInt(partesLeg[partesLeg.length-1],10);
+            if (!isNaN(sufLeg)) {
+              var curLeg = contadorPorMacro[claveLeg] || 0;
+              if (sufLeg > curLeg) contadorPorMacro[claveLeg] = sufLeg;
+            }
+          } else {
+            idSubFinalLeg = siguienteIdSecuencial(negLeg, opCanonLeg, idActLeg, i);
+          }
+          var subFinalLeg = subDispLeg !== "" ? subDispLeg : (idSubFinalLeg || "Punto "+i);
+          if (esIdFechaLike(subFinalLeg) && !esIdFechaLike(idSubFinalLeg)) subFinalLeg = "Punto "+idSubFinalLeg;
+          checklist.push({negocio:negLeg, operacion:opCanonLeg, idActividad:idActLeg, actividad:actLeg, idSubactividad:idSubFinalLeg, subactividad:subFinalLeg});
+        }
+      }
+      checklist = anexarMacro5S(checklist, plantillas5S, contadorPorMacro, detalle5S);
     }
+    // cecos
+    let cecosMatriz=[];
+    const shCecos=detectarHojaCecos(ss);
+    if(shCecos){
+      const vals=shCecos.getDataRange().getDisplayValues();
+      if(vals && vals.length > 0){
+        const headerNorm=vals[0].map(function(h){ 
+          return String(h||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim(); 
+        });
 
-    var configPers = cargarConfigPersonal(ss);
-    var configOps = cargarConfigOperaciones(ss);
-    var filtrosBase = cargarFiltrosBase(ss);
+        // Detección precisa de encabezados para evitar colisiones (ej. Nombre vs Código, Área vs Sub Área)
+        let idxNombre = headerNorm.findIndex(function(h){ return h === "nombre" || h === "nombre completo"; });
+        if (idxNombre < 0) idxNombre = headerNorm.findIndex(function(h){ return h.includes("nombre") && !h.includes("codigo") && !h.includes("ceco"); });
 
-    return JSON.stringify({
-      success: true,
-      checklist: checklist,
-      plantillas5S: plantillas5S,
-      detalle5S: detalle5S,
-      configPersonal: configPers,
-      configOperaciones: configOps,
-      filtrosBase: filtrosBase
-    });
+        let idxCargo = headerNorm.findIndex(function(h){ return h === "cargo" || h === "puesto"; });
+        if (idxCargo < 0) idxCargo = headerNorm.findIndex(function(h){ return h.includes("cargo"); });
 
-  } catch (err) {
-    return JSON.stringify({
-      success: false,
-      error: err.toString(),
-      stack: err.stack
-    });
-  }
+        let idxArea = headerNorm.findIndex(function(h){ return h === "area"; });
+        if (idxArea < 0) idxArea = headerNorm.findIndex(function(h){ return h.includes("area") && !h.includes("sub"); });
+
+        let idxEmail = headerNorm.findIndex(function(h){ return h === "email" || h === "correo" || h === "correo electronico"; });
+        if (idxEmail < 0) idxEmail = headerNorm.findIndex(function(h){ return h.includes("email") || h.includes("correo"); });
+
+        // Con la copia completa de CeCosOfi (más de 6 columnas) las posiciones fijas apuntarían a
+        // Código/DNI/Empresa/División: si falta un encabezado se omite cecos (sin romper la carga del checklist).
+        const cabeceraIncompleta = headerNorm.length > 6 && (idxNombre < 0 || idxCargo < 0 || idxArea < 0 || idxEmail < 0);
+        if (cabeceraIncompleta) {
+          Logger.log("Aviso: la hoja cecos no tiene los encabezados Nombre, Cargo, Área y Email; se omite la lista de personas.");
+        }
+        if(idxNombre<0) idxNombre=0; if(idxCargo<0) idxCargo=1; if(idxArea<0) idxArea=2; if(idxEmail<0) idxEmail=3;
+
+        for(let j=1;j<vals.length && !cabeceraIncompleta;j++){
+          const nombre=String(vals[j][idxNombre]||"").trim();
+          const cargo=String(vals[j][idxCargo]||"").trim();
+          const area=String(vals[j][idxArea]||"").trim();
+          const email=String(vals[j][idxEmail]||"").trim();
+          const emailLower = email.toLowerCase();
+
+          // Omitir filas sin email válido (mismo criterio que tenía la sincronización)
+          if (!email || 
+              emailLower === "no aplica" || 
+              emailLower === "nan" || 
+              emailLower === "-" || 
+              email.indexOf("@") === -1) {
+            continue;
+          }
+
+          if (!nombre) continue;
+
+          const searchIndex=normalizarTextoBusqueda(nombre+" "+cargo+" "+area+" "+emailLower);
+          cecosMatriz.push({
+            id: j, 
+            nombre: nombre, 
+            cargo: cargo, 
+            area: area, 
+            email: emailLower, 
+            searchIndex: searchIndex, 
+            palabras: searchIndex.split(/\s+/).filter(Boolean)
+          });
+        }
+      }
+    } else {
+      // fallback legacy personal
+      var sheetPersonal = ss.getSheetByName(CONFIG.HOJA_PERSONAL)||ss.getSheetByName(CONFIG.HOJA_PERSONAL_ALT) || ss.getSheetByName("PERSONAL") || ss.getSheetByName("Personal") || ss.getSheetByName("personal") || ss.getSheetByName("config_personal");
+      if(sheetPersonal){
+        const vals=sheetPersonal.getDataRange().getDisplayValues();
+        for(let j=1;j<vals.length;j++){
+          const nombre=String(vals[j][0]||"").trim(); if(!nombre) continue;
+          cecosMatriz.push({id:j, nombre:nombre, cargo:String(vals[j][1]||""), area:"", email: nombre.includes("@")?nombre:"", searchIndex: normalizarTextoBusqueda(nombre+" "+vals[j][1]), palabras: normalizarTextoBusqueda(nombre).split(/\s+/).filter(Boolean)});
+        }
+      }
+    }
+    let correosExtraMatriz = cargarCorreosExtraMatriz(ss);
+    return {status:"SUCCESS", checklist:checklist, cecosMatriz:cecosMatriz, correosExtraMatriz: correosExtraMatriz, personalMatriz: []};
+  }catch(e){ Logger.log("Error "+e); return {status:"ERROR", message:e.toString()};}
 }
 
 /**
